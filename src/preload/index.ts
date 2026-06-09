@@ -34,6 +34,11 @@ const electronAPI = {
     openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   },
 
+  // Auth
+  auth: {
+    clear: () => ipcRenderer.invoke('auth:clear'),
+  },
+
   // Listen for events from main process
   on: (channel: string, fn: (...args: unknown[]) => void) => {
     const ALLOWED = new Set([

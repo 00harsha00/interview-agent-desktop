@@ -2,8 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Base ──────────────────────────────────────────────────────────── */
-* {
+/* ── Base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after {
   box-sizing: border-box;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -13,53 +13,262 @@ html, body, #root {
   height: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
-  /* Transparent window — no background on the root */
+  overflow: visible;   /* allow fixed-position dropdowns to escape */
   background: transparent;
   color: #f1f5f9;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI', sans-serif;
 }
 
-/* ── Scrollbar ─────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 3px; height: 3px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-.scrollbar-none::-webkit-scrollbar { display: none; }
-
-/* ── Selection ─────────────────────────────────────────────────────── */
-::selection { background: rgba(34,197,94,0.3); }
-
-/* ── No-drag regions ───────────────────────────────────────────────── */
-button, input, a, select, textarea {
-  -webkit-app-region: no-drag;
-}
-
-/* ── Input text fix for Electron/WebKit ────────────────────────────── */
-/* WebKit ignores `color` on inputs — must use -webkit-text-fill-color  */
+/* ── Input text — Electron/WebKit override ────────────────────────── */
 input, textarea {
   -webkit-text-fill-color: #ffffff !important;
   color: #ffffff;
   caret-color: #4ade80;
 }
 input::placeholder, textarea::placeholder {
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.3) !important;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.28) !important;
   opacity: 1;
 }
 
-/* ── Audio bar animation ────────────────────────────────────────────── */
+/* ── No-drag on interactive elements ─────────────────────────────── */
+button, input, a, select, textarea {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+/* ── Selection ───────────────────────────────────────────────────── */
+::selection { background: rgba(34,197,94,0.25); }
+
+/* ══════════════════════════════════════════════════════════════════
+   DESIGN SYSTEM — macOS Vibrancy & Elevated Components
+   ══════════════════════════════════════════════════════════════════ */
+
+/* CSS Custom properties for theming */
+:root {
+  --bg-primary: #1e293b;
+  --bg-secondary: #0f172a;
+  --bg-tertiary: #0a0f1a;
+  --accent-primary: #6366f1;
+  --accent-secondary: #818cf8;
+  --accent-light: #a5b4fc;
+  --text-primary: #f1f5f9;
+  --text-secondary: rgba(255, 255, 255, 0.6);
+  --text-tertiary: rgba(255, 255, 255, 0.35);
+  --text-muted: rgba(255, 255, 255, 0.18);
+  --border-light: rgba(255, 255, 255, 0.06);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-medium: rgba(255, 255, 255, 0.12);
+}
+
+/* The base card/panel with macOS vibrancy layer */
+.overlay-card {
+  border-radius: 14px;
+  background: 
+    linear-gradient(135deg, 
+      rgba(30, 41, 59, 0.75) 0%, 
+      rgba(15, 23, 42, 0.75) 100%
+    );
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 8px 32px rgba(0, 0, 0, 0.7),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: box-shadow 200ms ease;
+}
+
+.overlay-card:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 12px 48px rgba(0, 0, 0, 0.8),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Floating panel — fixed width (380px) for frameless window */
+.floating-panel {
+  width: 380px;
+  border-radius: 14px;
+  background: 
+    linear-gradient(135deg, 
+      rgba(30, 41, 59, 0.78) 0%, 
+      rgba(15, 23, 42, 0.78) 100%
+    );
+  backdrop-filter: blur(20px) saturate(200%);
+  -webkit-backdrop-filter: blur(20px) saturate(200%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 12px 48px rgba(0, 0, 0, 0.8),
+    0 4px 16px rgba(0, 0, 0, 0.6);
+  border: none;
+}
+
+/* Toolbar/panel separator — use box-shadow NOT border-top/bottom */
+.overlay-divider {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.055);
+}
+
+/* Header row inside a card */
+.overlay-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  height: 40px;
+  background: rgba(0,0,0,0.3);
+  /* shadow line instead of border-bottom */
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,0.06);
+}
+
+/* Standard button (elevated glass pill) */
+.overlay-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 28px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(99, 102, 241, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.2);
+  border: none;
+  transition: all 140ms ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.overlay-btn:hover {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgba(255, 255, 255, 0.95);
+  box-shadow: 
+    inset 0 0 0 1px rgba(99, 102, 241, 0.3),
+    0 0 12px rgba(99, 102, 241, 0.2);
+}
+.overlay-btn:active {
+  background: rgba(99, 102, 241, 0.12);
+  transform: scale(0.97);
+}
+.overlay-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Ghost button — minimal variant */
+.overlay-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.15);
+  border: none;
+  transition: all 120ms ease;
+  cursor: pointer;
+}
+.overlay-btn-ghost:hover {
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(99, 102, 241, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.25);
+}
+
+/* Icon button — compact, hover-reactive */
+.overlay-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  width: 28px;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.4);
+  background: transparent;
+  transition: all 120ms ease;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+.overlay-icon-btn:hover {
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(99, 102, 241, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.12);
+}
+.overlay-icon-btn:active {
+  transform: scale(0.95);
+}
+
+/* ── Animations ──────────────────────────────────────────────────── */
 @keyframes wave {
-  0%   { height: 3px; }
+  0%   { height: 2px; }
   100% { height: 12px; }
 }
-@keyframes pulse {
-  from { opacity: 0.6; }
+
+@keyframes fadeSlideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
   to   { opacity: 1; }
 }
 
-/* ── Fade-in animation ──────────────────────────────────────────────── */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0); }
+@keyframes pulseGlow {
+  0%, 100% { 
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7);
+  }
+  50% { 
+    opacity: 0.9;
+    box-shadow: 0 0 0 6px rgba(99, 102, 241, 0);
+  }
 }
-.animate-fade-in { animation: fadeIn 0.15s ease-out both; }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.anim-in {
+  animation: fadeSlideDown 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.anim-in-up {
+  animation: fadeSlideUp 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.anim-scale-in {
+  animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}

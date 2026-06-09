@@ -6,8 +6,14 @@ type AuthState = 'loading' | 'authenticated' | 'unauthenticated'
 
 export function useAuth() {
   const [state, setState]   = useState<AuthState>('loading')
-  const [user, setUser]     = useState<AuthUser | null>(null)
+  const [user,  setUser]    = useState<AuthUser | null>(null)
+  const stateRef            = useRef<AuthState>('loading')
   const intervalRef         = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Keep stateRef in sync so the interval closure reads the latest state
+  // without needing `state` in the effect dep array (which would re-create
+  // the interval on every auth state change → multiple intervals running).
+  stateRef.current = state
 
   const check = useCallback(async () => {
     const u = await getAuthSession()
@@ -23,23 +29,22 @@ export function useAuth() {
   useEffect(() => {
     void check()
 
-    // Poll every 4s while unauthenticated — picks up browser sign-in automatically
+    // Poll every 4 s while unauthenticated — picks up browser sign-in
+    // Use stateRef (not captured `state`) so we don't re-create this interval.
     intervalRef.current = setInterval(() => {
-      if (state !== 'authenticated') void check()
+      if (stateRef.current !== 'authenticated') void check()
     }, 4_000)
 
-    // Listen for auth deep link
-    const unsub = window.electronAPI.on('protocol:auth', (payload: unknown) => {
-      // The web bridge already set the cookie via IPC; just re-check
+    // Listen for auth deep link — main process fires this after cookie injection
+    const unsub = window.electronAPI.on('protocol:auth', () => {
       setTimeout(() => void check(), 500)
-      console.log('[useAuth] Auth deep link received', payload)
     })
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
       unsub()
     }
-  }, [check, state])
+  }, [check]) // ← no `state` dep — interval is created exactly once
 
   return { state, user, refetch: check }
 }

@@ -1,6 +1,7 @@
 /**
  * useSpeechmatics — real-time transcription via Speechmatics WebSocket.
- * Manages connection lifecycle, reconnect, and typed message dispatch.
+ * Manages connection lifecycle, auto-reconnect on unexpected drops,
+ * and typed message dispatch.
  */
 import { useCallback, useEffect, useRef } from 'react'
 import { SM_RT_URL } from '@/config'
@@ -24,29 +25,49 @@ interface Options {
   onStateChange:  (state: SmConnectionState) => void
 }
 
+const MAX_RECONNECT_ATTEMPTS = 3
+const RECONNECT_DELAY_MS     = 2_000
+
 export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }: Options) {
-  const wsRef      = useRef<WebSocket | null>(null)
-  const seqNoRef   = useRef(0)
-  const optsRef    = useRef({ language, onPartial, onFinal, onStateChange })
-  optsRef.current  = { language, onPartial, onFinal, onStateChange }
+  const wsRef              = useRef<WebSocket | null>(null)
+  const seqNoRef           = useRef(0)
+  const jwtRef             = useRef<string>('')          // stored so we can reconnect
+  const intentionalClose   = useRef(false)               // true = we called disconnect()
+  const reconnectAttempts  = useRef(0)
+  const reconnectTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const optsRef            = useRef({ language, onPartial, onFinal, onStateChange })
+  optsRef.current          = { language, onPartial, onFinal, onStateChange }
+
+  function clearReconnectTimer() {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+  }
 
   const connect = useCallback((jwt: string) => {
-    // Tear down existing connection cleanly
+    // Tear down existing connection
+    intentionalClose.current = true
     if (wsRef.current) {
       wsRef.current.onclose = null
       wsRef.current.close()
       wsRef.current = null
     }
+    intentionalClose.current = false
+    clearReconnectTimer()
+
+    jwtRef.current           = jwt
+    reconnectAttempts.current = 0
+    seqNoRef.current          = 0
 
     optsRef.current.onStateChange('connecting')
-    seqNoRef.current = 0
 
     const ws = new WebSocket(`${SM_RT_URL}?jwt=${encodeURIComponent(jwt)}`)
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
     ws.onopen = () => {
-      const config: object = {
+      const config = {
         message: 'StartRecognition',
         audio_format: {
           type: 'raw',
@@ -71,6 +92,7 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
 
       switch (msg.message) {
         case 'RecognitionStarted':
+          reconnectAttempts.current = 0   // reset on successful connect
           optsRef.current.onStateChange('connected')
           break
 
@@ -97,17 +119,32 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
       }
     }
 
-    ws.onerror = (e) => {
-      console.error('[Speechmatics] WebSocket error', e)
+    ws.onerror = () => {
       optsRef.current.onStateChange('error')
     }
 
     ws.onclose = () => {
-      optsRef.current.onStateChange('disconnected')
-    }
-  }, [])
+      // If we closed it intentionally (user ended session) — don't reconnect
+      if (intentionalClose.current) {
+        optsRef.current.onStateChange('disconnected')
+        return
+      }
 
-  // Send binary PCM16 chunk — called from AudioWorklet message handler
+      // Unexpected drop — attempt reconnect with back-off
+      if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS && jwtRef.current) {
+        reconnectAttempts.current++
+        const delay = RECONNECT_DELAY_MS * reconnectAttempts.current
+        console.info(`[Speechmatics] Unexpected close — reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`)
+        optsRef.current.onStateChange('connecting')
+        reconnectTimerRef.current = setTimeout(() => {
+          connect(jwtRef.current)
+        }, delay)
+      } else {
+        optsRef.current.onStateChange('disconnected')
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const sendAudio = useCallback((buffer: ArrayBuffer) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(buffer)
@@ -115,8 +152,10 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
     }
   }, [])
 
-  // Graceful disconnect: send EndOfStream so server flushes final transcript
+  // Graceful disconnect: flush remaining audio, prevent reconnect
   const disconnect = useCallback(() => {
+    clearReconnectTimer()
+    intentionalClose.current = true
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({ message: 'EndOfStream', last_seq_no: seqNoRef.current }),
@@ -127,7 +166,10 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
     }
   }, [])
 
-  useEffect(() => () => { disconnect() }, [disconnect])
+  useEffect(() => () => {
+    clearReconnectTimer()
+    disconnect()
+  }, [disconnect])
 
   return { connect, sendAudio, disconnect }
 }

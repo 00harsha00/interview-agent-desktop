@@ -1,7 +1,7 @@
-// ─── Backend URL ──────────────────────────────────────────────────────────────
-// In dev: backend runs on 3000, frontend on 4000.
-// All API calls go directly to the backend.
-export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:3000'
+// ─── URLs ─────────────────────────────────────────────────────────────────────
+// In dev: backend runs on :3000, frontend (Next.js dashboard) on :4000.
+export const BACKEND_URL  = import.meta.env.VITE_BACKEND_URL  ?? 'http://localhost:3000'
+export const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL ?? 'http://localhost:4000'
 
 // ─── Speechmatics ─────────────────────────────────────────────────────────────
 export const SM_RT_URL = 'wss://eu2.rt.speechmatics.com/v2'

@@ -2,6 +2,7 @@
  * useSystemAudio — captures system audio (loopback) and microphone.
  * Uses Electron's setDisplayMediaRequestHandler for no-picker system audio.
  * Audio is processed in an AudioWorklet (off-thread, zero GC pressure).
+ * Exposes `onLevel` callback with 0–1 RMS amplitude for live VU metering.
  */
 import { useCallback, useRef } from 'react'
 import type { AudioSource } from '@/types'
@@ -9,42 +10,45 @@ import type { AudioSource } from '@/types'
 interface Options {
   onPCMChunk: (buffer: ArrayBuffer) => void
   onError:    (msg: string) => void
+  onLevel?:   (level: number) => void  // 0–1 RMS amplitude, ~15 fps
 }
 
-export function useSystemAudio({ onPCMChunk, onError }: Options) {
+export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
   const contextRef  = useRef<AudioContext | null>(null)
   const workletRef  = useRef<AudioWorkletNode | null>(null)
   const streamsRef  = useRef<MediaStream[]>([])
   const onPCMRef    = useRef(onPCMChunk)
   const onErrRef    = useRef(onError)
-  onPCMRef.current  = onPCMChunk
-  onErrRef.current  = onError
+  const onLevelRef  = useRef(onLevel)
+  // Throttle level updates to ~15 fps (66ms) — no need for 50 fps UI updates
+  const lastLevelTs = useRef(0)
+
+  onPCMRef.current   = onPCMChunk
+  onErrRef.current   = onError
+  onLevelRef.current = onLevel
 
   const stop = useCallback(() => {
-    // Stop worklet
     workletRef.current?.port.postMessage('stop')
     workletRef.current?.disconnect()
     workletRef.current = null
 
-    // Stop all tracks
     streamsRef.current.forEach((s) => s.getTracks().forEach((t) => t.stop()))
     streamsRef.current = []
 
-    // Close audio context
     contextRef.current?.close().catch(() => {})
     contextRef.current = null
+
+    // Reset level to 0 so bars go flat
+    onLevelRef.current?.(0)
   }, [])
 
   const start = useCallback(async (source: AudioSource): Promise<void> => {
-    stop() // clean previous session
+    stop()
 
     try {
-      const ctx = new AudioContext({ sampleRate: 48_000 }) // native rate; worklet resamples to 16k
+      const ctx = new AudioContext({ sampleRate: 48_000 })
       contextRef.current = ctx
 
-      // Load AudioWorklet module — use relative path so it works both from
-      // file:// (packaged app) and http://localhost (dev server).
-      // Absolute '/audio-processor.js' resolves to filesystem root on file://.
       await ctx.audioWorklet.addModule('./audio-processor.js')
       const worklet = new AudioWorkletNode(ctx, 'audio-processor', {
         numberOfInputs: 1,
@@ -56,7 +60,27 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
       workletRef.current = worklet
 
       worklet.port.onmessage = (e: MessageEvent<{ type: string; buffer: ArrayBuffer }>) => {
-        if (e.data.type === 'pcm') onPCMRef.current(e.data.buffer)
+        if (e.data.type !== 'pcm') return
+
+        // Forward to Speechmatics
+        onPCMRef.current(e.data.buffer)
+
+        // Compute RMS for VU meter — throttled to ~15 fps
+        if (onLevelRef.current) {
+          const now = Date.now()
+          if (now - lastLevelTs.current > 66) {
+            lastLevelTs.current = now
+            const samples = new Int16Array(e.data.buffer)
+            let sumSq = 0
+            for (let i = 0; i < samples.length; i++) {
+              const s = samples[i]! / 32768
+              sumSq += s * s
+            }
+            const rms = Math.sqrt(sumSq / (samples.length || 1))
+            // Boost by 6× — speech typically sits at 0.05–0.15 RMS; scale to visible range
+            onLevelRef.current(Math.min(1, rms * 6))
+          }
+        }
       }
 
       worklet.port.onmessageerror = () => onErrRef.current('AudioWorklet message error')
@@ -64,15 +88,13 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
       const merger = ctx.createChannelMerger(1)
       merger.connect(worklet)
 
-      // ── System audio ─────────────────────────────────────────────────────────
+      // ── System audio ──────────────────────────────────────────────────────────
       let sysAudioOk = false
       if (source === 'system' || source === 'both') {
         try {
-          // Electron intercepts getDisplayMedia and injects loopback audio.
-          // Requires Screen Recording permission on macOS — if missing, throws AbortError.
           const sysStream = await navigator.mediaDevices.getDisplayMedia({
             audio: true,
-            video: true, // video required by spec; stopped immediately after
+            video: true,
           })
           streamsRef.current.push(sysStream)
           sysStream.getVideoTracks().forEach((t) => t.stop())
@@ -87,30 +109,25 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
           const msg = (err as Error).message ?? ''
           console.warn('[useSystemAudio] System audio failed:', msg)
           if (source === 'system') {
-            // Hard failure — fall back to mic automatically rather than blocking
-            console.info('[useSystemAudio] Falling back to microphone')
             onErrRef.current(
-              'Screen Recording permission needed for system audio. ' +
-              'Go to System Settings → Privacy & Security → Screen Recording → enable IAI. ' +
+              'Screen Recording permission needed. ' +
+              'Go to System Settings → Privacy & Security → Screen Recording → enable Interview Agent. ' +
               'Falling back to microphone.'
             )
-            // Don't return — continue with mic below
           }
-          // For 'both', silently fall through to mic
         }
       }
 
-      // ── Microphone ─────────────────────────────────────────────────────────
-      // Also run mic if system audio fell back (sysAudioOk=false and source=system)
+      // ── Microphone ────────────────────────────────────────────────────────────
       if (source === 'mic' || source === 'both' || (source === 'system' && !sysAudioOk)) {
         try {
           const micStream = await navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: false,
               noiseSuppression: true,
-              autoGainControl:  true,
-              sampleRate:       48_000,
-              channelCount:     1,
+              autoGainControl: true,
+              sampleRate: 48_000,
+              channelCount: 1,
             },
             video: false,
           })
@@ -129,7 +146,6 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
         }
       }
 
-      // Resume context if it was suspended (browser autoplay policy)
       if (ctx.state === 'suspended') await ctx.resume()
 
     } catch (err) {

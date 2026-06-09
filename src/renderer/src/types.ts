@@ -13,6 +13,7 @@ export interface AuthUser {
   email: string
   name?: string | null
   credits: number
+  isAdmin?: boolean
 }
 
 // ─── Session ──────────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ export interface CallSession {
   resumeId?: string | null
   autoGenerate: boolean
   createdAt: string
+  activatedAt?: string | null  // ISO string — used to compute countdown on resume
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────

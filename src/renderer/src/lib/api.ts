@@ -125,6 +125,13 @@ export async function pingSession(id: string): Promise<void> {
   await trpcMutation('callSession.ping', { id }).catch(() => {})
 }
 
+export async function extendSession(id: string): Promise<{ newBalance: number }> {
+  return trpcMutation<{ success: boolean; newBalance: number }>(
+    'callSession.status.extendLimitedSession',
+    { id },
+  ).then((r) => ({ newBalance: r.newBalance }))
+}
+
 // ─── AI chat (SSE streaming) ──────────────────────────────────────────────────
 export function streamAIAnswer(
   callSessionId: string,
