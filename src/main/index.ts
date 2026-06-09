@@ -3,6 +3,7 @@ import {
   shell, session, desktopCapturer, nativeTheme, screen,
 } from 'electron'
 import { join } from 'path'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const IS_DEV = process.env.NODE_ENV === 'development'
@@ -16,6 +17,7 @@ const WIN_MIN_H  = 480
 // ─── Window reference ─────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
 let pendingProtocolUrl: string | null = null
+let activeAuthToken: string | null = null  // token injected into outgoing requests
 
 // ─── Window factory ───────────────────────────────────────────────────────────
 function createWindow(): void {
@@ -90,30 +92,55 @@ function createWindow(): void {
 }
 
 // ─── Auth cookie helper ───────────────────────────────────────────────────────
+// Problem: the renderer loads from file:// which has a null origin.
+// Browsers won't attach cookies to cross-origin requests from null origins even
+// with credentials:'include'. Fix: intercept all outgoing requests in the main
+// process and inject the Cookie header directly at the network level.
 async function setAuthCookies(token: string): Promise<void> {
+  activeAuthToken = token
+
+  // 1. Store token in Electron's cookie jar (belt-and-suspenders)
   const cookieBase = {
     value: token,
     httpOnly: true,
     secure: false,
     path: '/',
     sameSite: 'no_restriction' as const,
-    expirationDate: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30, // 30 days
+    expirationDate: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
   }
-  // Set for both ports — backend (3000) validates, frontend (4000) also needs it
-  const targets = [
-    { url: 'http://localhost:3000', name: 'next-auth.session-token' },
-    { url: 'http://localhost:4000', name: 'next-auth.session-token' },
-  ]
   await Promise.all(
-    targets.map(({ url, name }) =>
-      session.defaultSession.cookies.set({ url, name, ...cookieBase }).catch((e) =>
-        console.warn(`[main] Cookie set failed for ${url}:`, e)
-      )
+    ['http://localhost:3000', 'http://localhost:4000'].map((url) =>
+      session.defaultSession.cookies
+        .set({ url, name: 'next-auth.session-token', ...cookieBase })
+        .catch((e) => console.warn(`[main] Cookie set failed for ${url}:`, e))
     )
   )
-  // Flush cookie store to disk immediately
   await session.defaultSession.cookies.flushStore().catch(() => {})
-  console.log('[main] Auth cookies set for localhost:3000 and localhost:4000')
+
+  // 2. Inject Cookie header on ALL requests to localhost:3000 and localhost:4000
+  //    This bypasses the file:// null-origin restriction entirely.
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['http://localhost:3000/*', 'http://localhost:4000/*'] },
+    (details, callback) => {
+      if (!activeAuthToken) { callback({ requestHeaders: details.requestHeaders }); return }
+      const headers = { ...details.requestHeaders }
+      const existing = headers['Cookie'] ?? headers['cookie'] ?? ''
+      const cookieName = 'next-auth.session-token'
+      // Replace or append the session cookie
+      const withoutOld = existing
+        .split(';')
+        .map((c) => c.trim())
+        .filter((c) => !c.startsWith(`${cookieName}=`))
+        .join('; ')
+      const updated = withoutOld
+        ? `${withoutOld}; ${cookieName}=${activeAuthToken}`
+        : `${cookieName}=${activeAuthToken}`
+      headers['Cookie'] = updated
+      callback({ requestHeaders: headers })
+    }
+  )
+
+  console.log('[main] Auth token set — cookie injector active for localhost:3000/4000')
 }
 
 // ─── Protocol handler ─────────────────────────────────────────────────────────
@@ -131,6 +158,7 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
       const token = (data.authToken ?? data.token ?? data.sessionToken) as string | undefined
       if (token) {
         await setAuthCookies(token)
+        saveToken(token)
       } else {
         console.warn('[main] Auth deep link received but no token found in payload:', data)
       }
@@ -183,6 +211,16 @@ function registerIPC(): void {
   ipcMain.handle('shell:open-external', (_e, url: string) => {
     if (/^https?:\/\//.test(url)) shell.openExternal(url)
   })
+
+  // Clear auth token (sign out)
+  ipcMain.handle('auth:clear', async () => {
+    activeAuthToken = null
+    session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['http://localhost:3000/*', 'http://localhost:4000/*'] }, (_d, cb) => cb({}))
+    await session.defaultSession.cookies.remove('http://localhost:3000', 'next-auth.session-token').catch(() => {})
+    await session.defaultSession.cookies.remove('http://localhost:4000', 'next-auth.session-token').catch(() => {})
+    try { writeFileSync(tokenPath(), '', 'utf8') } catch { /* ignore */ }
+    console.log('[main] Auth token cleared')
+  })
 }
 
 // ─── Global shortcuts ─────────────────────────────────────────────────────────
@@ -233,8 +271,29 @@ if (!gotTheLock) {
   })
 }
 
-app.whenReady().then(() => {
+// ─── Token persistence ────────────────────────────────────────────────────────
+function tokenPath(): string {
+  const dir = join(app.getPath('userData'), 'parakeet')
+  try { mkdirSync(dir, { recursive: true }) } catch { /* exists */ }
+  return join(dir, 'session.token')
+}
+function saveToken(token: string): void {
+  try { writeFileSync(tokenPath(), token, 'utf8') } catch { /* ignore */ }
+}
+function loadToken(): string | null {
+  try { return readFileSync(tokenPath(), 'utf8').trim() || null } catch { return null }
+}
+
+app.whenReady().then(async () => {
   registerIPC()
+
+  // Restore previously saved auth token so we stay logged in across restarts
+  const saved = loadToken()
+  if (saved) {
+    await setAuthCookies(saved)
+    console.log('[main] Restored auth token from disk')
+  }
+
   createWindow()
   registerShortcuts()
 
