@@ -31,20 +31,72 @@ function useMousePassthrough() {
 
 // ── Mini-bar shown when "hidden" ───────────────────────────────────────────
 function MiniBar({ onRestore }: { onRestore: () => void }) {
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const positionRef = useRef({ x: 0, y: 0 })
+
   useEffect(() => {
     window.electronAPI.window.setSize(160, 28)
+    // Load saved position from localStorage
+    const saved = localStorage.getItem('minibar-position')
+    if (saved) {
+      try {
+        const pos = JSON.parse(saved)
+        positionRef.current = pos
+        window.electronAPI.window.setPosition(pos.x, pos.y)
+      } catch (e) {
+        console.warn('Failed to restore minibar position:', e)
+      }
+    }
   }, [])
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return // only left click
+    setIsDragging(true)
+    // Get current window position
+    // We'll track movement relative to the click point
+    setDragOffset({ x: e.clientX, y: e.clientY })
+  }
+
+  useEffect(() => {
+    if (!isDragging) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = e.clientX - dragOffset.x
+      const deltaY = e.clientY - dragOffset.y
+      positionRef.current.x += deltaX
+      positionRef.current.y += deltaY
+      setDragOffset({ x: e.clientX, y: e.clientY })
+      window.electronAPI.window.setPosition(positionRef.current.x, positionRef.current.y)
+    }
+
+    const handleMouseUp = () => {
+      setIsDragging(false)
+      // Save position to localStorage
+      localStorage.setItem('minibar-position', JSON.stringify(positionRef.current))
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDragging, dragOffset])
 
   return (
     <button
       data-overlay
+      onMouseDown={handleMouseDown}
       onClick={onRestore}
       className="flex items-center gap-1.5 h-7 px-3 rounded-full select-none transition-all hover:scale-105 active:scale-95"
       style={{
         background: 'rgba(8,8,12,0.94)',
         boxShadow: '0 0 0 1px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.6)',
         backdropFilter: 'blur(32px)',
-      }}
+        cursor: isDragging ? 'grabbing' : 'grab',
+        userSelect: 'none',
+      } as React.CSSProperties}
     >
       <span className="h-2 w-2 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" />
       <span className="text-white text-[11px] font-semibold tracking-wide">Interview <span className="text-indigo-400">Agent</span></span>

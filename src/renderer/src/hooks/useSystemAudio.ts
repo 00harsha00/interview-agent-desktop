@@ -46,6 +46,7 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
     stop()
 
     try {
+      console.log('[useSystemAudio] Starting audio capture:', source)
       const ctx = new AudioContext({ sampleRate: 48_000 })
       contextRef.current = ctx
 

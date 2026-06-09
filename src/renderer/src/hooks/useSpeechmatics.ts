@@ -60,6 +60,7 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
     reconnectAttempts.current = 0
     seqNoRef.current          = 0
 
+    console.log('[useSpeechmatics] Connecting with language:', language)
     optsRef.current.onStateChange('connecting')
 
     const ws = new WebSocket(`${SM_RT_URL}?jwt=${encodeURIComponent(jwt)}`)
@@ -67,6 +68,7 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
     wsRef.current = ws
 
     ws.onopen = () => {
+      console.log('[useSpeechmatics] WebSocket connected')
       const config = {
         message: 'StartRecognition',
         audio_format: {

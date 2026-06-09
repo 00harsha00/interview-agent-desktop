@@ -17,6 +17,9 @@ html, body, #root {
   background: transparent;
   color: #f1f5f9;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-backface-visibility: hidden;
+  -webkit-perspective: 1000;
 }
 
 /* ── Input text — Electron/WebKit override ────────────────────────── */
@@ -243,8 +246,8 @@ button, input, a, select, textarea {
 }
 
 @keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
+  0%, 49%, 100% { opacity: 1; }
+  50%, 99%       { opacity: 0.2; }
 }
 
 @keyframes scaleIn {
@@ -270,5 +273,5 @@ button, input, a, select, textarea {
 }
 
 .cursor-blink {
-  animation: blink 1s step-end infinite;
+  animation: blink 0.7s step-end infinite;
 }

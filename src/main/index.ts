@@ -142,7 +142,17 @@ async function setAuthCookies(token: string): Promise<void> {
 }
 
 // ─── Protocol handler ─────────────────────────────────────────────────────────
+let protocolHandlerInFlight = false
+let queuedProtocolUrl: string | null = null
+
 async function dispatchProtocolUrl(url: string): Promise<void> {
+  // Prevent concurrent handler calls; queue if already processing
+  if (protocolHandlerInFlight) {
+    queuedProtocolUrl = url
+    return
+  }
+
+  protocolHandlerInFlight = true
   try {
     const parsed = new URL(url)
     const rawPayload = parsed.searchParams.get('payload')
@@ -181,6 +191,15 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
     }
   } catch (err) {
     console.error('[main] Protocol URL parse error:', err)
+  } finally {
+    protocolHandlerInFlight = false
+    // Process queued URL if any
+    if (queuedProtocolUrl) {
+      const next = queuedProtocolUrl
+      queuedProtocolUrl = null
+      // Small delay to let the UI settle
+      setTimeout(() => void dispatchProtocolUrl(next), 100)
+    }
   }
 }
 
@@ -198,6 +217,12 @@ function registerIPC(): void {
   ipcMain.handle('window:is-visible', () => mainWindow?.isVisible() ?? false)
   ipcMain.handle('window:set-opacity', (_e, v: number) =>
     mainWindow?.setOpacity(Math.max(0.2, Math.min(1, v))))
+
+  // Custom window positioning (for floating MiniBar)
+  ipcMain.handle('window:set-position', (_e, x: number, y: number) => {
+    if (!mainWindow) return
+    mainWindow.setPosition(Math.round(x), Math.round(y), true)
+  })
 
   // Dynamic window sizing — renderer calls these to expand/collapse panels
   ipcMain.handle('window:set-height', (_e, h: number) => {
