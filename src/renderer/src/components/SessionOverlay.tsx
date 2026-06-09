@@ -889,7 +889,7 @@ export function SessionOverlay({ session, userCredits = 0, isAdmin = false, onEn
              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <WaveBars active={isRunning} level={audioLevel} />
 
-          {/* System audio toggle */}
+          {/* System audio toggle with label */}
           <button
             onClick={() => setSysOn((v) => !v)}
             title={sysOn ? 'System audio enabled — click to disable' : 'System audio disabled — click to enable'}
@@ -905,8 +905,10 @@ export function SessionOverlay({ session, userCredits = 0, isAdmin = false, onEn
             </svg>
             {sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
           </button>
+          <span className="text-[9px] text-white/40 font-medium">System</span>
 
-          {/* Mic toggle */}
+          {/* Separator */}
+          <Sep />
           <button
             onClick={() => setMicOn((v) => !v)}
             title={micOn ? 'Microphone enabled — click to disable' : 'Microphone disabled — click to enable'}
@@ -922,6 +924,7 @@ export function SessionOverlay({ session, userCredits = 0, isAdmin = false, onEn
             </svg>
             {micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
           </button>
+          <span className="text-[9px] text-white/40 font-medium">Mic</span>
         </div>
 
         <Sep />
@@ -975,25 +978,25 @@ export function SessionOverlay({ session, userCredits = 0, isAdmin = false, onEn
           </span>
         )}
 
-        {/* SM status — dot + label */}
-        <div className="flex items-center gap-1 flex-shrink-0"
-             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-             title={`Transcription: ${smState}`}>
-          <div className={cn('h-1.5 w-1.5 rounded-full',
-            smState === 'connected'    ? 'bg-green-400' :
-            smState === 'connecting'   ? 'bg-yellow-400 animate-pulse' :
-            smState === 'error'        ? 'bg-red-400 animate-pulse' :
-            'bg-white/15'
-          )} />
-          {smState === 'connecting' && (
-            <span className="text-[9px] text-yellow-400/70 font-medium">reconnecting…</span>
-          )}
-          {smState === 'error' && (
-            <span className="text-[9px] text-red-400/70 font-medium">error</span>
-          )}
-          {smState === 'disconnected' && isRunning && (
-            <span className="text-[9px] text-white/30 font-medium">dropped</span>
-          )}
+       {/* Answer/Question status badge */}
+        <div className="flex items-center justify-center px-2.5 py-1 rounded-lg text-[12px] font-semibold"
+             style={{
+               background: isRunning 
+                 ? smState === 'connected' ? 'rgba(34,197,94,0.15)' : 'rgba(251,146,60,0.15)'
+                 : 'rgba(255,255,255,0.08)',
+               color: isRunning
+                 ? smState === 'connected' ? '#86efac' : '#fca5a5'
+                 : '#ffffff80',
+               boxShadow: isRunning && smState === 'connected' 
+                 ? 'inset 0 0 0 1px rgba(34,197,94,0.3)' 
+                 : 'inset 0 0 0 1px rgba(255,255,255,0.15)',
+               minWidth: '70px',
+               textAlign: 'center',
+             }}>
+          {isRunning && smState === 'connected' ? '🎙️ Listening' :
+           isRunning && smState === 'connecting' ? '⏳ Connecting' :
+           ai.isStreaming ? '✨ Thinking' :
+           'Ready'}
         </div>
 
         {/* Settings */}
@@ -1059,8 +1062,8 @@ export function SessionOverlay({ session, userCredits = 0, isAdmin = false, onEn
             <div className="flex gap-1.5 px-2.5 pt-2.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
               {screenshots.map((src, i) => (
                 <div key={i} className="relative flex-shrink-0">
-                  <img src={src} alt="sc" className="h-9 w-14 object-cover rounded-lg"
-                       style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.1)' }} />
+                  <img src={src} alt="sc" className="h-14 w-20 object-cover rounded-lg hover:shadow-lg transition-shadow"
+                       style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.3)' }} />
                   <button
                     onClick={() => setScreenshots((p) => p.filter((_, j) => j !== i))}
                     className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-black/80 text-white/60 hover:text-white text-[8px] flex items-center justify-center"
@@ -1196,7 +1199,9 @@ export function SessionOverlay({ session, userCredits = 0, isAdmin = false, onEn
               </svg>
             </IBtn>
             {qaPairs.length > 0 && (
-              <span className="text-[10px] text-white/25 tabular-nums">{currentQA + 1}/{qaPairs.length}</span>
+              <span className="text-[10px] text-white/35 font-medium tracking-wider">
+                Q&A: <span className="font-semibold text-white/50">{currentQA + 1}</span>/<span className="text-white/35">{qaPairs.length}</span>
+              </span>
             )}
 
             {error && (
@@ -1235,8 +1240,8 @@ export function SessionOverlay({ session, userCredits = 0, isAdmin = false, onEn
               <>
                 <div className="flex gap-2">
                   <span className="text-[14px] leading-none mt-0.5 flex-shrink-0">💬</span>
-                  <p className="text-[11.5px] text-white/50 leading-relaxed">
-                    <span className="font-semibold text-white/40">Question: </span>{currentPair.question}
+                  <p className="text-[12px] text-white/60 leading-relaxed">
+                    <span className="font-semibold text-white/45">Q: </span>{currentPair.question}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1295,7 +1300,7 @@ function AnswerText({ content }: { content: string }) {
             </div>
           )
         }
-        return <p key={i} className="text-[12px] text-white/82 leading-relaxed whitespace-pre-wrap">{part}</p>
+        return <p key={i} className="text-[13.5px] text-white/85 leading-relaxed whitespace-pre-wrap">{part}</p>
       })}
     </>
   )
