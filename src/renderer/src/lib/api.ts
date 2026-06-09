@@ -89,24 +89,35 @@ export async function updateSessionStatus(
   id: string,
   status: 'ACTIVE' | 'ENDED',
 ): Promise<void> {
-  await trpcMutation('callSession.updateStatus', { id, status })
+  // callSession.status is a nested router: .activate or .end
+  if (status === 'ACTIVE') {
+    await trpcMutation('callSession.status.activate', { id })
+  } else {
+    await trpcMutation('callSession.status.end', { id })
+  }
 }
 
-export async function getSpeechmaticsJwt(callSessionId: string): Promise<string> {
-  const data = await trpcMutation<{ key: string }>(
+export async function getSpeechmaticsJwt(sessionId: string): Promise<string> {
+  // Backend expects { id } and returns { jwt: "..." }
+  const data = await trpcMutation<{ jwt: string }>(
     'callSession.generateSpeechmaticsApiKey',
-    { callSessionId },
+    { id: sessionId },
   )
-  return data.key
+  return data.jwt
 }
 
 export async function saveTranscriptions(
   callSessionId: string,
   transcriptions: Array<{ speaker: string; text: string }>,
 ): Promise<void> {
+  // Backend speaker enum: "MIC" | "SYSTEM" — map generic strings to enum values
+  const mapped = transcriptions.map((t) => ({
+    ...t,
+    speaker: (t.speaker?.toUpperCase() === 'MIC' ? 'MIC' : 'SYSTEM') as 'MIC' | 'SYSTEM',
+  }))
   await trpcMutation('callSession.transcription.createMany', {
     callSessionId,
-    transcriptions,
+    transcriptions: mapped,
   })
 }
 
