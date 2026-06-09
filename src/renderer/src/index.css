@@ -32,3 +32,14 @@ html, body, #root {
 button, input, a, select, textarea {
   -webkit-app-region: no-drag;
 }
+
+/* ── Input text fix for Electron/WebKit ────────────────────────────── */
+/* WebKit resets -webkit-text-fill-color on inputs which overrides color */
+input, textarea {
+  -webkit-text-fill-color: inherit;
+  color: inherit;
+}
+input::placeholder, textarea::placeholder {
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.25);
+  opacity: 1;
+}

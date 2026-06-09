@@ -42,8 +42,10 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
       const ctx = new AudioContext({ sampleRate: 48_000 }) // native rate; worklet resamples to 16k
       contextRef.current = ctx
 
-      // Load AudioWorklet module
-      await ctx.audioWorklet.addModule('/audio-processor.js')
+      // Load AudioWorklet module — use relative path so it works both from
+      // file:// (packaged app) and http://localhost (dev server).
+      // Absolute '/audio-processor.js' resolves to filesystem root on file://.
+      await ctx.audioWorklet.addModule('./audio-processor.js')
       const worklet = new AudioWorkletNode(ctx, 'audio-processor', {
         numberOfInputs: 1,
         numberOfOutputs: 0,
@@ -63,36 +65,44 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
       merger.connect(worklet)
 
       // ── System audio ─────────────────────────────────────────────────────────
+      let sysAudioOk = false
       if (source === 'system' || source === 'both') {
         try {
-          // Electron intercepts getDisplayMedia and provides loopback audio
+          // Electron intercepts getDisplayMedia and injects loopback audio.
+          // Requires Screen Recording permission on macOS — if missing, throws AbortError.
           const sysStream = await navigator.mediaDevices.getDisplayMedia({
             audio: true,
-            video: true, // required — video tracks are stopped immediately
+            video: true, // video required by spec; stopped immediately after
           })
           streamsRef.current.push(sysStream)
-
-          // Stop video immediately (we only want audio)
           sysStream.getVideoTracks().forEach((t) => t.stop())
 
           const audioTracks = sysStream.getAudioTracks()
           if (audioTracks.length > 0) {
             const sysSource = ctx.createMediaStreamSource(new MediaStream(audioTracks))
             sysSource.connect(merger, 0, 0)
+            sysAudioOk = true
           }
         } catch (err) {
-          console.warn('[useSystemAudio] System audio not available:', err)
+          const msg = (err as Error).message ?? ''
+          console.warn('[useSystemAudio] System audio failed:', msg)
           if (source === 'system') {
-            onErrRef.current('System audio unavailable. Check screen recording permission.')
-            stop()
-            return
+            // Hard failure — fall back to mic automatically rather than blocking
+            console.info('[useSystemAudio] Falling back to microphone')
+            onErrRef.current(
+              'Screen Recording permission needed for system audio. ' +
+              'Go to System Settings → Privacy & Security → Screen Recording → enable ParakeetAI. ' +
+              'Falling back to microphone.'
+            )
+            // Don't return — continue with mic below
           }
-          // For 'both', fall through to mic only
+          // For 'both', silently fall through to mic
         }
       }
 
-      // ── Microphone ───────────────────────────────────────────────────────────
-      if (source === 'mic' || source === 'both') {
+      // ── Microphone ─────────────────────────────────────────────────────────
+      // Also run mic if system audio fell back (sysAudioOk=false and source=system)
+      if (source === 'mic' || source === 'both' || (source === 'system' && !sysAudioOk)) {
         try {
           const micStream = await navigator.mediaDevices.getUserMedia({
             audio: {
@@ -109,8 +119,10 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
           micSource.connect(merger, 0, 0)
         } catch (err) {
           console.warn('[useSystemAudio] Mic not available:', err)
-          if (source === 'mic') {
-            onErrRef.current('Microphone unavailable. Check microphone permission.')
+          if (source === 'mic' || (source === 'system' && !sysAudioOk)) {
+            onErrRef.current(
+              'Microphone unavailable. Check microphone permission in System Settings → Privacy & Security → Microphone.'
+            )
             stop()
             return
           }
