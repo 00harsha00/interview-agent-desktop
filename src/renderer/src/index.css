@@ -14,16 +14,18 @@ html, body, #root {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background: #0f172a;
+  /* Transparent window — no background on the root */
+  background: transparent;
   color: #f1f5f9;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
 }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+.scrollbar-none::-webkit-scrollbar { display: none; }
 
 /* ── Selection ─────────────────────────────────────────────────────── */
 ::selection { background: rgba(34,197,94,0.3); }
@@ -34,7 +36,6 @@ button, input, a, select, textarea {
 }
 
 /* ── Input text fix for Electron/WebKit ────────────────────────────── */
-/* WebKit resets -webkit-text-fill-color on inputs which overrides color */
 input, textarea {
   -webkit-text-fill-color: inherit;
   color: inherit;
@@ -43,3 +44,16 @@ input::placeholder, textarea::placeholder {
   -webkit-text-fill-color: rgba(255, 255, 255, 0.25);
   opacity: 1;
 }
+
+/* ── Audio bar animation ────────────────────────────────────────────── */
+@keyframes pulse {
+  from { transform: scaleY(0.4); }
+  to   { transform: scaleY(1.0); }
+}
+
+/* ── Fade-in animation ──────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fadeIn 0.15s ease-out both; }

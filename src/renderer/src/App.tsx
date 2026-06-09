@@ -1,24 +1,51 @@
 /**
  * App — root component.
  * Manages auth state, session routing, and protocol deep-link handling.
+ * The window is transparent; each child renders its own visible background.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth }          from '@/hooks/useAuth'
 import { getSession }       from '@/lib/api'
-import { TitleBar }         from '@/components/TitleBar'
 import { AuthGate }         from '@/components/AuthGate'
 import { IdleScreen }       from '@/components/IdleScreen'
 import { SessionOverlay }   from '@/components/SessionOverlay'
 import type { CallSession, SessionProtocolPayload } from '@/types'
 
+// Mouse-passthrough helper: make transparent areas click-through
+// We track whether the cursor is over an interactive zone and toggle accordingly.
+function useMousePassthrough() {
+  const over = useRef(false)
+
+  useEffect(() => {
+    const enable  = () => { if (!over.current) { over.current = true;  window.electronAPI.window.setIgnoreMouse(false) } }
+    const disable = () => { if (over.current)  { over.current = false; window.electronAPI.window.setIgnoreMouse(true) } }
+
+    const onMove = (e: MouseEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+      const isInteractive = !!el?.closest('[data-overlay]')
+      isInteractive ? enable() : disable()
+    }
+
+    document.addEventListener('mousemove', onMove, { passive: true })
+    // Start with mouse pass-through enabled (no window capturing by default)
+    window.electronAPI.window.setIgnoreMouse(true)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      window.electronAPI.window.setIgnoreMouse(false)
+    }
+  }, [])
+}
+
 type View = 'idle' | 'session'
 
 export default function App() {
+  useMousePassthrough()
+
   const { state: authState, user } = useAuth()
-  const [view,         setView]        = useState<View>('idle')
-  const [activeSession, setActiveSession] = useState<CallSession | null>(null)
+  const [view,           setView]           = useState<View>('idle')
+  const [activeSession,  setActiveSession]  = useState<CallSession | null>(null)
   const [loadingSession, setLoadingSession] = useState(false)
-  const [sessionError,  setSessionError]  = useState<string | null>(null)
+  const [sessionError,   setSessionError]  = useState<string | null>(null)
 
   const loadSession = useCallback(async (sessionId: string) => {
     setLoadingSession(true)
@@ -40,7 +67,6 @@ export default function App() {
   useEffect(() => {
     const unsub = window.electronAPI.on('protocol:session', (raw: unknown) => {
       const payload = raw as SessionProtocolPayload
-      // Frontend sends callSessionId; legacy field is sessionId — accept both
       const id = payload?.callSessionId ?? payload?.sessionId
       if (id) void loadSession(id)
     })
@@ -52,52 +78,56 @@ export default function App() {
     setView('idle')
   }, [])
 
-  // ── Render ──────────────────────────────────────────────────────────────────
-  const isActive = view === 'session' && !!activeSession
+  // Auth + idle: compact modal at top
+  if (authState === 'loading' || authState === 'unauthenticated') {
+    return (
+      <div className="flex items-start justify-center pt-0">
+        <div data-overlay className="w-full">
+          <AuthGate state={authState} />
+        </div>
+      </div>
+    )
+  }
 
-  return (
-    <div className="flex flex-col h-screen bg-gray-900 overflow-hidden text-white">
-      <TitleBar isActive={isActive} />
+  // Session loading / error
+  if (loadingSession) {
+    return (
+      <div data-overlay className="flex items-center gap-2 px-4 py-3 bg-gray-900/95 rounded-xl border border-white/10 mx-2 mt-2 text-sm text-white/50">
+        <div className="h-4 w-4 border-2 border-white/20 border-t-green-400 rounded-full animate-spin" />
+        Loading session…
+      </div>
+    )
+  }
 
-      {/* Auth loading / unauthenticated */}
-      {(authState === 'loading' || authState === 'unauthenticated') && (
-        <AuthGate state={authState} />
-      )}
+  if (sessionError) {
+    return (
+      <div data-overlay className="flex items-center gap-3 px-4 py-3 bg-gray-900/95 rounded-xl border border-red-500/20 mx-2 mt-2">
+        <p className="text-red-400 text-sm flex-1">{sessionError}</p>
+        <button onClick={() => { setSessionError(null); setView('idle') }}
+          className="text-xs text-white/40 hover:text-white/70 underline">Dismiss</button>
+      </div>
+    )
+  }
 
-      {/* Authenticated */}
-      {authState === 'authenticated' && user && (
-        <>
-          {loadingSession && (
-            <div className="flex-1 flex items-center justify-center text-white/30 text-sm gap-2">
-              <div className="h-4 w-4 border-2 border-white/20 border-t-green-400 rounded-full animate-spin" />
-              Loading session…
-            </div>
-          )}
+  // Authenticated + no session → idle
+  if (authState === 'authenticated' && user && view === 'idle') {
+    return (
+      <div className="flex items-start justify-center">
+        <div data-overlay className="w-full">
+          <IdleScreen user={user} />
+        </div>
+      </div>
+    )
+  }
 
-          {sessionError && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center">
-              <p className="text-red-400 text-sm">{sessionError}</p>
-              <button
-                onClick={() => { setSessionError(null); setView('idle') }}
-                className="text-xs text-white/40 hover:text-white/70 underline"
-              >
-                Back to idle
-              </button>
-            </div>
-          )}
+  // Active session
+  if (authState === 'authenticated' && view === 'session' && activeSession) {
+    return (
+      <div data-overlay className="w-full">
+        <SessionOverlay session={activeSession} onEnd={handleSessionEnd} />
+      </div>
+    )
+  }
 
-          {!loadingSession && !sessionError && view === 'idle' && (
-            <IdleScreen user={user} />
-          )}
-
-          {!loadingSession && !sessionError && view === 'session' && activeSession && (
-            <SessionOverlay
-              session={activeSession}
-              onEnd={handleSessionEnd}
-            />
-          )}
-        </>
-      )}
-    </div>
-  )
+  return null
 }

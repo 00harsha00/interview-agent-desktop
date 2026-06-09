@@ -9,10 +9,9 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 const IS_DEV = process.env.NODE_ENV === 'development'
 const RENDERER_DEV_URL = process.env['ELECTRON_RENDERER_URL']
 const PROTOCOL = 'parakeetai'
-const WIN_WIDTH  = 380
-const WIN_HEIGHT = 700
-const WIN_MIN_W  = 320
-const WIN_MIN_H  = 480
+const TOOLBAR_H  = 48   // toolbar-only height
+const MODAL_H    = 340  // activation modal height
+const WIN_W_INIT = 860  // initial width (may be updated after screen query)
 
 // ─── Window reference ─────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
@@ -23,25 +22,24 @@ let activeAuthToken: string | null = null  // token injected into outgoing reque
 function createWindow(): void {
   nativeTheme.themeSource = 'dark'
 
-  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  const { width: sw } = screen.getPrimaryDisplay().workAreaSize
+  const winW = Math.min(WIN_W_INIT, sw - 40)
+  const winX = Math.round((sw - winW) / 2)
 
   mainWindow = new BrowserWindow({
-    width: WIN_WIDTH,
-    height: WIN_HEIGHT,
-    minWidth: WIN_MIN_W,
-    minHeight: WIN_MIN_H,
-    x: sw - WIN_WIDTH - 24,
-    y: Math.round((sh - WIN_HEIGHT) / 2),
+    width: winW,
+    height: MODAL_H,      // starts with modal height
+    x: winX,
+    y: 0,
     frame: false,
-    transparent: false,
-    backgroundColor: '#0f172a',
+    transparent: true,
+    backgroundColor: '#00000000',
     hasShadow: true,
     roundedCorners: true,
     alwaysOnTop: true,
-    resizable: true,
+    resizable: false,
     movable: true,
     skipTaskbar: false,
-    titleBarStyle: 'hidden',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -200,6 +198,31 @@ function registerIPC(): void {
   ipcMain.handle('window:is-visible', () => mainWindow?.isVisible() ?? false)
   ipcMain.handle('window:set-opacity', (_e, v: number) =>
     mainWindow?.setOpacity(Math.max(0.2, Math.min(1, v))))
+
+  // Dynamic window sizing — renderer calls these to expand/collapse panels
+  ipcMain.handle('window:set-height', (_e, h: number) => {
+    if (!mainWindow) return
+    const [w] = mainWindow.getSize()
+    mainWindow.setSize(w, Math.round(Math.max(TOOLBAR_H, h)), false)
+  })
+  ipcMain.handle('window:set-size', (_e, w: number, h: number) => {
+    if (!mainWindow) return
+    mainWindow.setSize(Math.round(w), Math.round(h), false)
+  })
+  ipcMain.handle('window:set-ignore-mouse', (_e, ignore: boolean) => {
+    mainWindow?.setIgnoreMouseEvents(ignore, { forward: true })
+  })
+
+  // Position presets — move overlay to top/left/bottom
+  ipcMain.handle('window:move-to', (_e, pos: 'top' | 'left' | 'bottom') => {
+    if (!mainWindow) return
+    const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+    const [w, h] = mainWindow.getSize()
+    if (pos === 'top')    mainWindow.setPosition(Math.round((sw - w) / 2), 0, true)
+    else if (pos === 'left')   mainWindow.setPosition(0, Math.round((sh - h) / 2), true)
+    else if (pos === 'bottom') mainWindow.setPosition(Math.round((sw - w) / 2), sh - h, true)
+    else if (pos === 'right')  mainWindow.setPosition(sw - w - 8, Math.round((sh - h) / 2), true)
+  })
 
   // App info
   ipcMain.handle('app:version', () => app.getVersion())
