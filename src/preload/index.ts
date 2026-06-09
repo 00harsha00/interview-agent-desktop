@@ -42,6 +42,7 @@ const electronAPI = {
       'shortcut:answer',
       'shortcut:screenshot',
       'shortcut:clear',
+      'shortcut:toggle-chat',
       'shortcut:toggle-visibility',
     ])
     if (!ALLOWED.has(channel)) return () => {}

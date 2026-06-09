@@ -256,10 +256,11 @@ function registerIPC(): void {
 // ─── Global shortcuts ─────────────────────────────────────────────────────────
 function registerShortcuts(): void {
   const shortcuts: Array<[string, string]> = [
-    ['CommandOrControl+Shift+A', 'shortcut:answer'],
-    ['CommandOrControl+Shift+S', 'shortcut:screenshot'],
-    ['CommandOrControl+Shift+K', 'shortcut:clear'],
-    ['CommandOrControl+Shift+H', 'shortcut:toggle-visibility'],
+    ['CommandOrControl+Return',       'shortcut:answer'],         // ⌘↵
+    ['CommandOrControl+Shift+Return', 'shortcut:screenshot'],     // ⌘⇧↵
+    ['CommandOrControl+Shift+Minus',  'shortcut:toggle-chat'],    // ⌘⇧—
+    ['CommandOrControl+Shift+Back',   'shortcut:clear'],          // ⌘⇧⌫
+    ['CommandOrControl+Shift+H',      'shortcut:toggle-visibility'],
   ]
 
   shortcuts.forEach(([accelerator, channel]) => {

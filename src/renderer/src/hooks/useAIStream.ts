@@ -26,7 +26,7 @@ export function useAIStream({ callSessionId, onChunk, onDone, onError }: Options
     bufRef.current = ''
   }, [])
 
-  const ask = useCallback((question: string) => {
+  const ask = useCallback((question: string, images?: string[]) => {
     if (!question.trim()) return
     abort() // cancel any in-flight request
 
@@ -55,6 +55,7 @@ export function useAIStream({ callSessionId, onChunk, onDone, onError }: Options
         abortRef.current = null
         optsRef.current.onError(err)
       },
+      images,
     )
   }, [abort])
 

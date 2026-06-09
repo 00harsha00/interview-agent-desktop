@@ -36,19 +36,25 @@ button, input, a, select, textarea {
 }
 
 /* ── Input text fix for Electron/WebKit ────────────────────────────── */
+/* WebKit ignores `color` on inputs — must use -webkit-text-fill-color  */
 input, textarea {
-  -webkit-text-fill-color: inherit;
-  color: inherit;
+  -webkit-text-fill-color: #ffffff !important;
+  color: #ffffff;
+  caret-color: #4ade80;
 }
 input::placeholder, textarea::placeholder {
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.25);
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.3) !important;
   opacity: 1;
 }
 
 /* ── Audio bar animation ────────────────────────────────────────────── */
+@keyframes wave {
+  0%   { height: 3px; }
+  100% { height: 12px; }
+}
 @keyframes pulse {
-  from { transform: scaleY(0.4); }
-  to   { transform: scaleY(1.0); }
+  from { opacity: 0.6; }
+  to   { opacity: 1; }
 }
 
 /* ── Fade-in animation ──────────────────────────────────────────────── */

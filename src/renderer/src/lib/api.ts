@@ -133,12 +133,13 @@ export function streamAIAnswer(
   onChunk: (text: string) => void,
   onDone: () => void,
   onError: (err: string) => void,
+  images?: string[],   // optional base64 data-URLs for vision
 ): void {
   fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callSessionId, question }),
+    body: JSON.stringify({ callSessionId, question, ...(images?.length ? { images } : {}) }),
     signal,
   })
     .then(async (res) => {
