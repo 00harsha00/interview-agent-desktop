@@ -1,7 +1,7 @@
 {
-  "name": "parakeet-desktop",
+  "name": "iai-desktop",
   "version": "1.0.0",
-  "description": "ParakeetAI — Real-time AI interview assistant desktop overlay",
+  "description": "IAI — Real-time AI interview assistant desktop overlay",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -28,8 +28,8 @@
     "react-dom": "^18.3.1"
   },
   "build": {
-    "appId": "com.parakeetai.desktop",
-    "productName": "ParakeetAI",
+    "appId": "com.iai.desktop",
+    "productName": "IAI",
     "mac": {
       "category": "public.app-category.productivity",
       "target": ["dmg", "zip"],
@@ -42,7 +42,7 @@
     },
     "protocols": [
       {
-        "name": "ParakeetAI",
+        "name": "IAI",
         "schemes": ["parakeetai"]
       }
     ],

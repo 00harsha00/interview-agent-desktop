@@ -20,7 +20,7 @@ export function IdleScreen({ user }: Props) {
           <div className="h-6 w-6 rounded-lg bg-green-500 flex items-center justify-center">
             <span className="text-white font-black text-[10px]">P</span>
           </div>
-          <span className="text-white text-xs font-semibold">Parakeet<span className="text-green-400">AI</span></span>
+          <span className="text-white text-xs font-semibold">I<span className="text-green-400">AI</span></span>
         </div>
         <div className="flex-1" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
         <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>

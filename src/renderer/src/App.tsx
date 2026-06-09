@@ -12,13 +12,16 @@ import { SessionOverlay }   from '@/components/SessionOverlay'
 import type { CallSession, SessionProtocolPayload } from '@/types'
 
 // Mouse-passthrough helper: make transparent areas click-through
-// We track whether the cursor is over an interactive zone and toggle accordingly.
+function setIgnoreMouse(v: boolean) {
+  try { window.electronAPI?.window?.setIgnoreMouse?.(v) } catch { /* ignore */ }
+}
+
 function useMousePassthrough() {
   const over = useRef(false)
 
   useEffect(() => {
-    const enable  = () => { if (!over.current) { over.current = true;  window.electronAPI.window.setIgnoreMouse(false) } }
-    const disable = () => { if (over.current)  { over.current = false; window.electronAPI.window.setIgnoreMouse(true) } }
+    const enable  = () => { if (!over.current) { over.current = true;  setIgnoreMouse(false) } }
+    const disable = () => { if (over.current)  { over.current = false; setIgnoreMouse(true) } }
 
     const onMove = (e: MouseEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
@@ -27,11 +30,10 @@ function useMousePassthrough() {
     }
 
     document.addEventListener('mousemove', onMove, { passive: true })
-    // Start with mouse pass-through enabled (no window capturing by default)
-    window.electronAPI.window.setIgnoreMouse(true)
+    setIgnoreMouse(true)
     return () => {
       document.removeEventListener('mousemove', onMove)
-      window.electronAPI.window.setIgnoreMouse(false)
+      setIgnoreMouse(false)
     }
   }, [])
 }

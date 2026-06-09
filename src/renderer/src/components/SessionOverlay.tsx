@@ -72,7 +72,7 @@ function ActivationModal({ session, onActivate, onBack, error, activating }: Act
           <div className="h-6 w-6 rounded-lg bg-green-500 flex items-center justify-center">
             <span className="text-white font-black text-[10px]">P</span>
           </div>
-          <span className="text-white text-xs font-semibold">Parakeet<span className="text-green-400">AI</span></span>
+          <span className="text-white text-xs font-semibold">I<span className="text-green-400">AI</span></span>
         </div>
 
         {/* Credits badge */}
@@ -123,7 +123,7 @@ function ActivationModal({ session, onActivate, onBack, error, activating }: Act
             <p className="text-white/70">
               Instead of a call tab, you can also share a{' '}
               <span className="font-semibold text-white">mock call</span> on YouTube and test
-              ParakeetAI that way. Example video:{' '}
+              IAI that way. Example video:{' '}
               <button
                 onClick={() => window.electronAPI.shell.openExternal('https://youtu.be/mock-call')}
                 className="text-green-400 hover:underline"

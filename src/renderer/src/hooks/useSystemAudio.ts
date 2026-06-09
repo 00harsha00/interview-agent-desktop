@@ -91,7 +91,7 @@ export function useSystemAudio({ onPCMChunk, onError }: Options) {
             console.info('[useSystemAudio] Falling back to microphone')
             onErrRef.current(
               'Screen Recording permission needed for system audio. ' +
-              'Go to System Settings → Privacy & Security → Screen Recording → enable ParakeetAI. ' +
+              'Go to System Settings → Privacy & Security → Screen Recording → enable IAI. ' +
               'Falling back to microphone.'
             )
             // Don't return — continue with mic below
