@@ -29,7 +29,11 @@ async function request<T>(
 
   if (!res.ok) {
     let message = res.statusText
-    try { const body = await res.json(); message = body.error ?? body.message ?? message } catch {}
+    try {
+      const body = await res.json() as { error?: { json?: { message?: string } }; message?: string }
+      // tRPC v11 error envelope: {error: {json: {message: "..."}}}
+      message = body.error?.json?.message ?? body.message ?? message
+    } catch {}
     throw new APIError(res.status, message)
   }
 
@@ -37,17 +41,21 @@ async function request<T>(
   return text ? (JSON.parse(text) as T) : ({} as T)
 }
 
+// tRPC v11 wraps both input and output in a {json: ...} envelope.
+// Query:    GET  ?input={"json":{...}}   → {"result":{"data":{"json":{...}}}}
+// Mutation: POST body={"json":{...}}     → {"result":{"data":{"json":{...}}}}
 function trpcQuery<T>(procedure: string, input?: unknown): Promise<T> {
-  const inputStr = input !== undefined ? `?input=${encodeURIComponent(JSON.stringify(input))}` : ''
-  return request<{ result: { data: T } }>(`/api/trpc/${procedure}${inputStr}`)
-    .then((r) => r.result.data)
+  const wrapped = input !== undefined ? { json: input } : undefined
+  const inputStr = wrapped ? `?input=${encodeURIComponent(JSON.stringify(wrapped))}` : ''
+  return request<{ result: { data: { json: T } } }>(`/api/trpc/${procedure}${inputStr}`)
+    .then((r) => r.result.data.json)
 }
 
 function trpcMutation<T>(procedure: string, input: unknown): Promise<T> {
-  return request<{ result: { data: T } }>(`/api/trpc/${procedure}`, {
+  return request<{ result: { data: { json: T } } }>(`/api/trpc/${procedure}`, {
     method: 'POST',
     body: JSON.stringify({ json: input }),
-  }).then((r) => r.result.data)
+  }).then((r) => r.result.data.json)
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
