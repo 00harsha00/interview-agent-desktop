@@ -40,7 +40,9 @@ export default function App() {
   useEffect(() => {
     const unsub = window.electronAPI.on('protocol:session', (raw: unknown) => {
       const payload = raw as SessionProtocolPayload
-      if (payload?.sessionId) void loadSession(payload.sessionId)
+      // Frontend sends callSessionId; legacy field is sessionId — accept both
+      const id = payload?.callSessionId ?? payload?.sessionId
+      if (id) void loadSession(id)
     })
     return unsub
   }, [loadSession])

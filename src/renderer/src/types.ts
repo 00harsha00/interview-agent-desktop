@@ -56,7 +56,8 @@ export type AudioSource = 'mic' | 'system' | 'both' | 'none'
 
 // ─── Protocol payloads ────────────────────────────────────────────────────────
 export interface SessionProtocolPayload {
-  sessionId: string
+  sessionId?: string       // legacy fallback
+  callSessionId?: string   // what the frontend actually sends
   authToken?: string
 }
 

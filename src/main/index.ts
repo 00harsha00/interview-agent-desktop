@@ -168,6 +168,13 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
         mainWindow.focus()
       }
     } else if (parsed.hostname === 'session') {
+      // Session deep link also carries authToken — set cookie automatically
+      // so the app is authenticated even if launched fresh from the browser
+      const token = (data.authToken ?? data.token) as string | undefined
+      if (token && token !== activeAuthToken) {
+        await setAuthCookies(token)
+        saveToken(token)
+      }
       if (mainWindow) {
         mainWindow.webContents.send('protocol:session', data)
         mainWindow.show()
