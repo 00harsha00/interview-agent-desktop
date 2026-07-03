@@ -1,4 +1,14 @@
 node_modules/
 dist/
+out/
+.vite/
 *.local
 .DS_Store
+*.log
+# Env files contain live tunnel URLs — never commit
+.env
+.env.local
+.env.production
+.env.development
+# Icon build intermediate
+resources/MyIcon.iconset/
