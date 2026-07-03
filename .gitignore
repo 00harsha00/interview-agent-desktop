@@ -5,10 +5,10 @@ out/
 *.local
 .DS_Store
 *.log
-# Env files contain live tunnel URLs — never commit
+# Env files with live deployment URLs — never commit
+# (.env.development is committed: localhost values only)
 .env
 .env.local
 .env.production
-.env.development
 # Icon build intermediate
 resources/MyIcon.iconset/

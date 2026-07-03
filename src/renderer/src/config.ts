@@ -1,6 +1,6 @@
 // ─── URLs ─────────────────────────────────────────────────────────────────────
 // Configured via .env.development / .env.production (VITE_API_BASE_URL).
-// Baked into the bundle at build time — set the ngrok URL before `npm run dist:*`.
+// Baked into the bundle at build time from .env.production (permanent Railway/Vercel URLs).
 // In dev: backend runs on :3000, frontend (Next.js dashboard) on :4000.
 export const BACKEND_URL =
   import.meta.env.VITE_API_BASE_URL ??

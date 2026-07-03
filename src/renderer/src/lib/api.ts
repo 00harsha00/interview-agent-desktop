@@ -1,6 +1,6 @@
 /**
  * Type-safe API client for the ParakeetAI backend.
- * All calls go to localhost:3000 (the Next.js backend).
+ * All calls go to BACKEND_URL (the Next.js backend — localhost in dev, Railway in prod).
  */
 import { BACKEND_URL } from '@/config'
 import type { AIModel, AuthUser, CallSession } from '@/types'
