@@ -7,17 +7,18 @@ import { streamAIAnswer } from '@/lib/api'
 
 interface Options {
   callSessionId: string
+  extraContext?: string
   onChunk:  (text: string) => void
   onDone:   (fullText: string) => void
   onError:  (msg: string) => void
 }
 
-export function useAIStream({ callSessionId, onChunk, onDone, onError }: Options) {
+export function useAIStream({ callSessionId, extraContext, onChunk, onDone, onError }: Options) {
   const [isStreaming, setIsStreaming]  = useState(false)
   const abortRef  = useRef<AbortController | null>(null)
   const bufRef    = useRef('')
-  const optsRef   = useRef({ callSessionId, onChunk, onDone, onError })
-  optsRef.current = { callSessionId, onChunk, onDone, onError }
+  const optsRef   = useRef({ callSessionId, extraContext, onChunk, onDone, onError })
+  optsRef.current = { callSessionId, extraContext, onChunk, onDone, onError }
 
   const abort = useCallback(() => {
     abortRef.current?.abort()
@@ -56,6 +57,7 @@ export function useAIStream({ callSessionId, onChunk, onDone, onError }: Options
         optsRef.current.onError(err)
       },
       images,
+      optsRef.current.extraContext,
     )
   }, [abort])
 

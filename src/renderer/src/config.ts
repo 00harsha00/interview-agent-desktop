@@ -1,6 +1,11 @@
 // ─── URLs ─────────────────────────────────────────────────────────────────────
+// Configured via .env.development / .env.production (VITE_API_BASE_URL).
+// Baked into the bundle at build time — set the ngrok URL before `npm run dist:*`.
 // In dev: backend runs on :3000, frontend (Next.js dashboard) on :4000.
-export const BACKEND_URL  = import.meta.env.VITE_BACKEND_URL  ?? 'http://localhost:3000'
+export const BACKEND_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  import.meta.env.VITE_BACKEND_URL ??      // legacy name, still honored
+  'http://localhost:3000'
 export const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL ?? 'http://localhost:4000'
 
 // ─── Speechmatics ─────────────────────────────────────────────────────────────

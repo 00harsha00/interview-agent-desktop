@@ -11,10 +11,13 @@ const electronAPI = {
     toggle:         () => ipcRenderer.invoke('window:toggle'),
     isVisible:      () => ipcRenderer.invoke('window:is-visible') as Promise<boolean>,
     setOpacity:     (v: number) => ipcRenderer.invoke('window:set-opacity', v),
-    setHeight:      (h: number) => ipcRenderer.invoke('window:set-height', h),
+    setHeight:      (h: number, anchorBottom?: boolean) => ipcRenderer.invoke('window:set-height', h, anchorBottom),
     setSize:        (w: number, h: number) => ipcRenderer.invoke('window:set-size', w, h),
+    getWorkAreaSize: () => ipcRenderer.invoke('window:get-work-area') as Promise<{ width: number; height: number }>,
     setIgnoreMouse: (v: boolean) => ipcRenderer.invoke('window:set-ignore-mouse', v),
-    moveTo:         (pos: 'top' | 'left' | 'bottom' | 'right') => ipcRenderer.invoke('window:move-to', pos),
+    setContentProtection: (v: boolean) => ipcRenderer.invoke('window:set-content-protection', v),
+    setPosition:    (x: number, y: number) => ipcRenderer.invoke('window:set-position', x, y),
+    moveTo:         (pos: string) => ipcRenderer.invoke('window:move-to', pos),
   },
 
   // App info
@@ -37,6 +40,8 @@ const electronAPI = {
   // Auth
   auth: {
     clear: () => ipcRenderer.invoke('auth:clear'),
+    signin: (email: string, password: string) =>
+      ipcRenderer.invoke('auth:signin', email, password) as Promise<{ success: boolean; error?: string }>,
   },
 
   // Listen for events from main process
@@ -53,12 +58,10 @@ const electronAPI = {
     if (!ALLOWED.has(channel)) return () => {}
     const listener = (_: Electron.IpcRendererEvent, ...args: unknown[]) => fn(...args)
     ipcRenderer.on(channel, listener)
-    // Return unsubscribe function
     return () => ipcRenderer.removeListener(channel, listener)
   },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
 
-// TypeScript declaration for the renderer
 export type ElectronAPI = typeof electronAPI

@@ -3,7 +3,7 @@
  * All calls go to localhost:3000 (the Next.js backend).
  */
 import { BACKEND_URL } from '@/config'
-import type { AuthUser, CallSession } from '@/types'
+import type { AIModel, AuthUser, CallSession } from '@/types'
 
 class APIError extends Error {
   constructor(public status: number, message: string) {
@@ -121,6 +121,12 @@ export async function saveTranscriptions(
   })
 }
 
+export async function updateSessionModel(id: string, aiModel: AIModel): Promise<void> {
+  // Existing callSession.update mutation accepts aiModel; history is keyed by
+  // callSessionId so switching mid-session keeps the full conversation.
+  await trpcMutation('callSession.update', { id, aiModel })
+}
+
 export async function pingSession(id: string): Promise<void> {
   await trpcMutation('callSession.ping', { id }).catch(() => {})
 }
@@ -132,6 +138,48 @@ export async function extendSession(id: string): Promise<{ newBalance: number }>
   ).then((r) => ({ newBalance: r.newBalance }))
 }
 
+// ─── Session creation ─────────────────────────────────────────────────────────
+export interface CreateSessionInput {
+  companyName: string
+  jobDescription: string        // required on backend (min 1 char)
+  resumeId?: string
+  documentIds?: string[]
+  language?: string
+  mode: 'FREE' | 'DESKTOP'     // backend SessionMode: FREE | DESKTOP | WEB
+  autoGenerate?: boolean
+  aiModel?: AIModel            // backend defaults to GPT4O when omitted
+}
+
+export async function createSession(data: CreateSessionInput): Promise<CallSession> {
+  return trpcMutation<CallSession>('callSession.create', data)
+}
+
+// ─── Resumes ─────────────────────────────────────────────────────────────────
+export interface UserResume {
+  id: string
+  fileName: string
+  mimeType: string
+  fileSize: number
+  createdAt: string
+}
+
+export async function getUserResumes(): Promise<UserResume[]> {
+  try {
+    return await trpcQuery<UserResume[]>('resume.getMany')
+  } catch {
+    return []
+  }
+}
+
+export async function getResumeContent(id: string): Promise<string | null> {
+  try {
+    const data = await trpcQuery<{ parsedContent?: string }>('resume.getOne', { id })
+    return data.parsedContent ?? null
+  } catch {
+    return null
+  }
+}
+
 // ─── AI chat (SSE streaming) ──────────────────────────────────────────────────
 export function streamAIAnswer(
   callSessionId: string,
@@ -140,13 +188,19 @@ export function streamAIAnswer(
   onChunk: (text: string) => void,
   onDone: () => void,
   onError: (err: string) => void,
-  images?: string[],   // optional base64 data-URLs for vision
+  images?: string[],
+  extraContext?: string,
 ): void {
   fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ callSessionId, question, ...(images?.length ? { images } : {}) }),
+    body: JSON.stringify({
+      callSessionId,
+      question,
+      ...(images?.length ? { images } : {}),
+      ...(extraContext?.trim() ? { extraContext: extraContext.trim() } : {}),
+    }),
     signal,
   })
     .then(async (res) => {

@@ -41,6 +41,8 @@ export interface TranscriptEntry {
   text: string
   isFinal: boolean
   timestamp: number
+  /** true once this segment was consumed by an Answer (mirrors questionBufRef flush — display only) */
+  sent?: boolean
 }
 
 export interface AIMessage {

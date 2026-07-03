@@ -44,6 +44,7 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
 
   const start = useCallback(async (source: AudioSource): Promise<void> => {
     stop()
+    if (source === 'none') return   // both toggles off — stay silent
 
     try {
       console.log('[useSystemAudio] Starting audio capture:', source)
