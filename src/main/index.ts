@@ -28,9 +28,7 @@ const FRONTEND_URL: string =
 // "__Secure-next-auth.session-token" in production (https backend) but plain
 // "next-auth.session-token" in dev (http). Pick the right name accordingly.
 const IS_HTTPS_BACKEND = BACKEND_URL.startsWith('https://')
-const SESSION_COOKIE_NAME = IS_HTTPS_BACKEND
-  ? '__Secure-next-auth.session-token'
-  : 'next-auth.session-token'
+const SESSION_COOKIE_NAMES = ['__Secure-next-auth.session-token', 'next-auth.session-token'] as const
 const TOOLBAR_H  = 48   // toolbar-only height
 const MODAL_H    = 340  // activation modal height
 const WIN_W_INIT = 860  // initial width (may be updated after screen query)
@@ -101,13 +99,17 @@ function extractSessionToken(setCookies: string[]): string | null {
   return null
 }
 
+function buildCookieHeader(token: string): string {
+  return SESSION_COOKIE_NAMES.map((name) => `${name}=${encodeURIComponent(token)}`).join('; ')
+}
+
 async function verifyAuthToken(token: string): Promise<{ ok: boolean; email?: string; error?: string }> {
   try {
     const res = await httpFetch(
       `${BACKEND_URL}/api/auth/session`,
       'GET',
       undefined,
-      { Cookie: `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}` }
+      { Cookie: buildCookieHeader(token) }
     )
     if (!res.ok) {
       return { ok: false, error: `Auth check failed (${res.status})` }
@@ -250,7 +252,7 @@ function createWindow(): void {
 async function clearAuthState(): Promise<void> {
   activeAuthToken = null
   for (const url of [BACKEND_URL, FRONTEND_URL]) {
-    for (const name of ['next-auth.session-token', '__Secure-next-auth.session-token']) {
+    for (const name of [...SESSION_COOKIE_NAMES]) {
       await session.defaultSession.cookies.remove(url, name).catch(() => {})
     }
   }
@@ -264,16 +266,22 @@ async function setAuthCookies(token: string): Promise<void> {
   const cookieBase = {
     value: token,
     httpOnly: true,
-    secure: IS_HTTPS_BACKEND,   // __Secure- prefixed cookies REQUIRE secure:true
     path: '/',
     sameSite: 'lax' as const,
     expirationDate: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
   }
   await Promise.all(
-    [BACKEND_URL, FRONTEND_URL].map((url) =>
-      session.defaultSession.cookies
-        .set({ url, name: SESSION_COOKIE_NAME, ...cookieBase })
-        .catch((e) => console.warn(`[main] Cookie set failed for ${url}:`, e))
+    [BACKEND_URL, FRONTEND_URL].flatMap((url) =>
+      SESSION_COOKIE_NAMES.map((name) =>
+        session.defaultSession.cookies
+          .set({
+            url,
+            name,
+            ...cookieBase,
+            secure: name.startsWith('__Secure-') || IS_HTTPS_BACKEND,
+          })
+          .catch((e) => console.warn(`[main] Cookie set failed for ${url} (${name}):`, e))
+      )
     )
   )
   await session.defaultSession.cookies.flushStore().catch(() => {})
@@ -286,7 +294,6 @@ async function setAuthCookies(token: string): Promise<void> {
       if (!activeAuthToken) { callback({ requestHeaders: details.requestHeaders }); return }
       const headers = { ...details.requestHeaders }
       const existing = headers['Cookie'] ?? headers['cookie'] ?? ''
-      const cookieName = SESSION_COOKIE_NAME
       // Replace or append the session cookie — strip any prior value under
       // either the plain or __Secure- name so we never send a stale/duplicate.
       const withoutOld = existing
@@ -294,9 +301,10 @@ async function setAuthCookies(token: string): Promise<void> {
         .map((c) => c.trim())
         .filter((c) => c && !/^(?:__Secure-)?next-auth\.session-token=/.test(c))
         .join('; ')
+      const injectedCookies = SESSION_COOKIE_NAMES.map((name) => `${name}=${activeAuthToken}`).join('; ')
       const updated = withoutOld
-        ? `${withoutOld}; ${cookieName}=${activeAuthToken}`
-        : `${cookieName}=${activeAuthToken}`
+        ? `${withoutOld}; ${injectedCookies}`
+        : injectedCookies
       headers['Cookie'] = updated
       callback({ requestHeaders: headers })
     }
@@ -309,6 +317,79 @@ async function setAuthCookies(token: string): Promise<void> {
 let protocolHandlerInFlight = false
 let queuedProtocolUrl: string | null = null
 
+function normalizeBase64Payload(value: string): string {
+  return value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=')
+}
+
+function parseDeepLinkPayload(rawPayload: string | null): { data: Record<string, unknown>; rawPayload: string; decodedPayload: string } {
+  if (!rawPayload) {
+    throw new Error('Missing deep-link payload')
+  }
+
+  const raw = rawPayload.trim()
+  console.log('[main] deep-link raw payload:', raw)
+
+  let decoded = raw
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch (err) {
+    console.warn('[main] deep-link decodeURIComponent failed, using raw payload:', err)
+  }
+  console.log('[main] deep-link decoded payload:', decoded)
+
+  const candidates = [decoded, normalizeBase64Payload(decoded)]
+  let parsed: Record<string, unknown> | null = null
+
+  for (const candidate of candidates) {
+    try {
+      const base64Decoded = Buffer.from(candidate, 'base64').toString('utf8')
+      if (base64Decoded.trim()) {
+        try {
+          parsed = JSON.parse(base64Decoded) as Record<string, unknown>
+          console.log('[main] deep-link parsed JSON:', parsed)
+          break
+        } catch (parseErr) {
+          console.warn('[main] deep-link base64 decode did not yield valid JSON:', parseErr)
+        }
+      }
+    } catch (err) {
+      console.warn('[main] deep-link base64 decode failed:', err)
+    }
+  }
+
+  if (!parsed) {
+    try {
+      parsed = JSON.parse(decoded) as Record<string, unknown>
+      console.log('[main] deep-link parsed JSON:', parsed)
+    } catch (err) {
+      throw new Error(`Unable to parse deep-link payload: ${String(err)}`)
+    }
+  }
+
+  const authToken =
+    typeof parsed.authToken === 'string'
+      ? parsed.authToken
+      : typeof parsed.token === 'string'
+        ? parsed.token
+        : typeof parsed.sessionToken === 'string'
+          ? parsed.sessionToken
+          : ''
+
+  const normalizedData: Record<string, unknown> = {
+    ...parsed,
+    authToken,
+  }
+
+  if (typeof parsed.callSessionId === 'string') {
+    normalizedData.callSessionId = parsed.callSessionId
+  }
+  if (typeof parsed.sessionId === 'string') {
+    normalizedData.sessionId = parsed.sessionId
+  }
+
+  return { data: normalizedData, rawPayload: raw, decodedPayload: decoded }
+}
+
 async function dispatchProtocolUrl(url: string): Promise<void> {
   // Prevent concurrent handler calls; queue if already processing
   if (protocolHandlerInFlight) {
@@ -320,14 +401,17 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
   try {
     const parsed = new URL(url)
     const rawPayload = parsed.searchParams.get('payload')
-    if (!rawPayload) return
 
-    const json = Buffer.from(decodeURIComponent(rawPayload), 'base64').toString('utf8')
-    const data = JSON.parse(json) as Record<string, unknown>
+    if (!rawPayload) {
+      console.warn('[main] deep-link missing payload in URL:', url)
+      return
+    }
+
+    const { data } = parseDeepLinkPayload(rawPayload)
 
     if (parsed.hostname === 'auth') {
       // ── Set cookie in Electron's session BEFORE telling renderer ───────────
-      const token = (data.authToken ?? data.token ?? data.sessionToken) as string | undefined
+      const token = typeof data.authToken === 'string' ? data.authToken : ''
       if (token) {
         await setAuthCookies(token)
         const verified = await verifyAuthToken(token)
@@ -337,7 +421,7 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
           console.warn('[main] Auth deep link token did not verify:', verified.error)
         }
       } else {
-        console.warn('[main] Auth deep link received but no token found in payload:', data)
+        console.warn('[main] Auth deep link received but no valid token was found in payload:', data)
       }
       if (mainWindow) {
         mainWindow.webContents.send('protocol:auth', data)
@@ -347,7 +431,7 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
     } else if (parsed.hostname === 'session') {
       // Session deep link also carries authToken — set cookie automatically
       // so the app is authenticated even if launched fresh from the browser
-      const token = (data.authToken ?? data.token) as string | undefined
+      const token = typeof data.authToken === 'string' ? data.authToken : ''
       if (token && token !== activeAuthToken) {
         await setAuthCookies(token)
         const verified = await verifyAuthToken(token)
