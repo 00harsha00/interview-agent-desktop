@@ -40,6 +40,8 @@ const electronAPI = {
   // Auth
   auth: {
     clear: () => ipcRenderer.invoke('auth:clear'),
+    setToken: (token: string) =>
+      ipcRenderer.invoke('auth:set-token', token) as Promise<{ success: boolean; error?: string }>,
     signin: (email: string, password: string) =>
       ipcRenderer.invoke('auth:signin', email, password) as Promise<{ success: boolean; error?: string }>,
   },

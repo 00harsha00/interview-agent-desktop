@@ -100,6 +100,27 @@ function extractSessionToken(setCookies: string[]): string | null {
   return null
 }
 
+async function verifyAuthToken(token: string): Promise<{ ok: boolean; email?: string; error?: string }> {
+  try {
+    const res = await httpFetch(
+      `${BACKEND_URL}/api/auth/session`,
+      'GET',
+      undefined,
+      { Cookie: `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}` }
+    )
+    if (!res.ok) {
+      return { ok: false, error: `Auth check failed (${res.status})` }
+    }
+    const data = JSON.parse(res.body || '{}') as { user?: { email?: string } }
+    if (!data.user?.email) {
+      return { ok: false, error: 'Server did not recognize this desktop session.' }
+    }
+    return { ok: true, email: data.user.email }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
 // ─── Window reference ─────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
 let pendingProtocolUrl: string | null = null
@@ -225,6 +246,16 @@ function createWindow(): void {
 // Browsers won't attach cookies to cross-origin requests from null origins even
 // with credentials:'include'. Fix: intercept all outgoing requests in the main
 // process and inject the Cookie header directly at the network level.
+async function clearAuthState(): Promise<void> {
+  activeAuthToken = null
+  for (const url of [BACKEND_URL, FRONTEND_URL]) {
+    for (const name of ['next-auth.session-token', '__Secure-next-auth.session-token']) {
+      await session.defaultSession.cookies.remove(url, name).catch(() => {})
+    }
+  }
+  try { writeFileSync(tokenPath(), '', 'utf8') } catch { /* ignore */ }
+}
+
 async function setAuthCookies(token: string): Promise<void> {
   activeAuthToken = token
 
@@ -298,7 +329,12 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
       const token = (data.authToken ?? data.token ?? data.sessionToken) as string | undefined
       if (token) {
         await setAuthCookies(token)
-        saveToken(token)
+        const verified = await verifyAuthToken(token)
+        if (verified.ok) saveToken(token)
+        else {
+          await clearAuthState()
+          console.warn('[main] Auth deep link token did not verify:', verified.error)
+        }
       } else {
         console.warn('[main] Auth deep link received but no token found in payload:', data)
       }
@@ -313,7 +349,12 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
       const token = (data.authToken ?? data.token) as string | undefined
       if (token && token !== activeAuthToken) {
         await setAuthCookies(token)
-        saveToken(token)
+        const verified = await verifyAuthToken(token)
+        if (verified.ok) saveToken(token)
+        else {
+          await clearAuthState()
+          console.warn('[main] Session deep link token did not verify:', verified.error)
+        }
       }
       if (mainWindow) {
         mainWindow.webContents.send('protocol:session', data)
@@ -423,6 +464,27 @@ function registerIPC(): void {
     if (/^https?:\/\//.test(url)) shell.openExternal(url)
   })
 
+  // Set an auth token supplied by the browser bridge or another trusted renderer.
+  ipcMain.handle('auth:set-token', async (
+    _evt: Electron.IpcMainInvokeEvent,
+    token: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!token?.trim()) return { success: false, error: 'Missing desktop auth token' }
+    try {
+      await setAuthCookies(token.trim())
+      const verified = await verifyAuthToken(token.trim())
+      if (!verified.ok) {
+        await clearAuthState()
+        return { success: false, error: verified.error ?? 'Desktop session was rejected by the server' }
+      }
+      saveToken(token.trim())
+      console.log('[main] Auth token accepted for', verified.email)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: (err as Error).message }
+    }
+  })
+
   // In-app email/password sign-in (no browser required)
   ipcMain.handle('auth:signin', async (
     _evt: Electron.IpcMainInvokeEvent,
@@ -477,8 +539,16 @@ function registerIPC(): void {
 
       if (token) {
         await setAuthCookies(token)
+        const verified = await verifyAuthToken(token)
+        if (!verified.ok) {
+          await clearAuthState()
+          return {
+            success: false,
+            error: verified.error ?? 'Signed in, but the desktop session could not be verified.',
+          }
+        }
         saveToken(token)
-        console.log('[main] In-app sign-in successful')
+        console.log('[main] In-app sign-in successful for', verified.email)
         return { success: true }
       }
 
@@ -510,15 +580,7 @@ function registerIPC(): void {
 
   // Clear auth token (sign out)
   ipcMain.handle('auth:clear', async () => {
-    activeAuthToken = null
-    session.defaultSession.webRequest.onBeforeSendHeaders({ urls: [`${BACKEND_URL}/*`, `${FRONTEND_URL}/*`] }, (_d, cb) => cb({}))
-    // Remove under both cookie names (plain + __Secure-) for both origins
-    for (const url of [BACKEND_URL, FRONTEND_URL]) {
-      for (const name of ['next-auth.session-token', '__Secure-next-auth.session-token']) {
-        await session.defaultSession.cookies.remove(url, name).catch(() => {})
-      }
-    }
-    try { writeFileSync(tokenPath(), '', 'utf8') } catch { /* ignore */ }
+    await clearAuthState()
     console.log('[main] Auth token cleared')
   })
 }
