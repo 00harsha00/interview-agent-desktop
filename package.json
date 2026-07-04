@@ -63,7 +63,8 @@
       {
         "name": "IAI",
         "schemes": [
-          "iai-desktop"
+          "iai-desktop",
+          "iai-desktop-dev"
         ]
       }
     ],

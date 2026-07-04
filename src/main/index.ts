@@ -12,7 +12,8 @@ import * as https from 'https'
 // Packaged .dmg/.exe builds are always treated as production.
 const IS_DEV = process.env.NODE_ENV === 'development' || !app.isPackaged
 const RENDERER_DEV_URL = process.env['ELECTRON_RENDERER_URL']
-const PROTOCOL = 'iai-desktop'
+const SUPPORTED_PROTOCOLS = ['iai-desktop', 'iai-desktop-dev'] as const
+const DEFAULT_PROTOCOL = IS_DEV ? 'iai-desktop-dev' : 'iai-desktop'
 // Stealth flags — automatically ON in packaged builds, OFF during development
 // (so screenshots/dock access work while developing). No manual flipping needed.
 const CONTENT_PROTECTION = !IS_DEV  // overlay invisible in screen shares/recordings
@@ -613,7 +614,13 @@ function registerShortcuts(): void {
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
-app.setAsDefaultProtocolClient(PROTOCOL)
+for (const protocol of SUPPORTED_PROTOCOLS) {
+  try {
+    app.setAsDefaultProtocolClient(protocol)
+  } catch (err) {
+    console.warn(`[main] Could not register protocol ${protocol}:`, err)
+  }
+}
 
 // Bring the (already-running) overlay to the front — used when a protocol URL
 // arrives while the app is alive but backgrounded/minimized.
@@ -646,7 +653,7 @@ if (!gotTheLock) {
   app.quit()
 } else {
   app.on('second-instance', (_e, argv) => {
-    const url = argv.find((a) => a.startsWith(`${PROTOCOL}://`))
+    const url = argv.find((a) => SUPPORTED_PROTOCOLS.some((protocol) => a.startsWith(`${protocol}://`)))
     if (url) {
       if (mainWindow) dispatchProtocolUrl(url)
       else pendingProtocolUrl = url
