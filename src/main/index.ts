@@ -23,6 +23,13 @@ const BACKEND_URL: string =
   import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:3000'
 const FRONTEND_URL: string =
   import.meta.env.VITE_FRONTEND_URL ?? 'http://localhost:4000'
+// NextAuth uses secure cookies on HTTPS: the session cookie is named
+// "__Secure-next-auth.session-token" in production (https backend) but plain
+// "next-auth.session-token" in dev (http). Pick the right name accordingly.
+const IS_HTTPS_BACKEND = BACKEND_URL.startsWith('https://')
+const SESSION_COOKIE_NAME = IS_HTTPS_BACKEND
+  ? '__Secure-next-auth.session-token'
+  : 'next-auth.session-token'
 const TOOLBAR_H  = 48   // toolbar-only height
 const MODAL_H    = 340  // activation modal height
 const WIN_W_INIT = 860  // initial width (may be updated after screen query)
@@ -86,7 +93,8 @@ function httpFetch(
 
 function extractSessionToken(setCookies: string[]): string | null {
   for (const c of setCookies) {
-    const m = c.match(/next-auth\.session-token=([^;]+)/)
+    // Match both the plain (http/dev) and __Secure- (https/prod) cookie names
+    const m = c.match(/(?:__Secure-)?next-auth\.session-token=([^;]+)/)
     if (m?.[1]) return decodeURIComponent(m[1])
   }
   return null
@@ -224,7 +232,7 @@ async function setAuthCookies(token: string): Promise<void> {
   const cookieBase = {
     value: token,
     httpOnly: true,
-    secure: false,
+    secure: IS_HTTPS_BACKEND,   // __Secure- prefixed cookies REQUIRE secure:true
     path: '/',
     sameSite: 'lax' as const,
     expirationDate: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
@@ -232,7 +240,7 @@ async function setAuthCookies(token: string): Promise<void> {
   await Promise.all(
     [BACKEND_URL, FRONTEND_URL].map((url) =>
       session.defaultSession.cookies
-        .set({ url, name: 'next-auth.session-token', ...cookieBase })
+        .set({ url, name: SESSION_COOKIE_NAME, ...cookieBase })
         .catch((e) => console.warn(`[main] Cookie set failed for ${url}:`, e))
     )
   )
@@ -246,12 +254,13 @@ async function setAuthCookies(token: string): Promise<void> {
       if (!activeAuthToken) { callback({ requestHeaders: details.requestHeaders }); return }
       const headers = { ...details.requestHeaders }
       const existing = headers['Cookie'] ?? headers['cookie'] ?? ''
-      const cookieName = 'next-auth.session-token'
-      // Replace or append the session cookie
+      const cookieName = SESSION_COOKIE_NAME
+      // Replace or append the session cookie — strip any prior value under
+      // either the plain or __Secure- name so we never send a stale/duplicate.
       const withoutOld = existing
         .split(';')
         .map((c) => c.trim())
-        .filter((c) => !c.startsWith(`${cookieName}=`))
+        .filter((c) => c && !/^(?:__Secure-)?next-auth\.session-token=/.test(c))
         .join('; ')
       const updated = withoutOld
         ? `${withoutOld}; ${cookieName}=${activeAuthToken}`
@@ -503,8 +512,12 @@ function registerIPC(): void {
   ipcMain.handle('auth:clear', async () => {
     activeAuthToken = null
     session.defaultSession.webRequest.onBeforeSendHeaders({ urls: [`${BACKEND_URL}/*`, `${FRONTEND_URL}/*`] }, (_d, cb) => cb({}))
-    await session.defaultSession.cookies.remove(BACKEND_URL, 'next-auth.session-token').catch(() => {})
-    await session.defaultSession.cookies.remove(FRONTEND_URL, 'next-auth.session-token').catch(() => {})
+    // Remove under both cookie names (plain + __Secure-) for both origins
+    for (const url of [BACKEND_URL, FRONTEND_URL]) {
+      for (const name of ['next-auth.session-token', '__Secure-next-auth.session-token']) {
+        await session.defaultSession.cookies.remove(url, name).catch(() => {})
+      }
+    }
     try { writeFileSync(tokenPath(), '', 'utf8') } catch { /* ignore */ }
     console.log('[main] Auth token cleared')
   })
