@@ -9,8 +9,8 @@
         default-src 'self';
         script-src 'self' 'unsafe-inline';
         style-src 'self' 'unsafe-inline';
-        connect-src 'self' http://localhost:* https://localhost:* wss://*.speechmatics.com wss://*.rt.speechmatics.com;
-        img-src 'self' data: blob:;
+        connect-src 'self' http://localhost:* https: wss://*.speechmatics.com wss://*.rt.speechmatics.com;
+        img-src 'self' data: blob: https:;
         media-src 'self' blob:;
         worker-src 'self' blob:;
       "

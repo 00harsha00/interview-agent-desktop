@@ -463,6 +463,27 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
 
 // ─── IPC handlers ─────────────────────────────────────────────────────────────
 function registerIPC(): void {
+  // ── CORS override for renderer → backend calls ──────────────────────────────
+  // The renderer loads from file:// (null origin). Chromium blocks credentialed
+  // cross-origin reads and rejects "Access-Control-Allow-Origin: null" outright.
+  // Since the main process injects the session cookie on every backend request
+  // (onBeforeSendHeaders) and the renderer fetches non-credentialed, we can
+  // safely relax the *response* CORS headers to "*" so Chromium reads them.
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: [`${BACKEND_URL}/*`, `${FRONTEND_URL}/*`] },
+    (details, callback) => {
+      const responseHeaders = { ...details.responseHeaders }
+      // Drop any existing (case-insensitive) CORS headers to avoid duplicates
+      for (const k of Object.keys(responseHeaders)) {
+        if (/^access-control-/i.test(k)) delete responseHeaders[k]
+      }
+      responseHeaders['Access-Control-Allow-Origin'] = ['*']
+      responseHeaders['Access-Control-Allow-Methods'] = ['GET,POST,PUT,DELETE,OPTIONS']
+      responseHeaders['Access-Control-Allow-Headers'] = ['*']
+      callback({ responseHeaders })
+    }
+  )
+
   // Window controls
   ipcMain.handle('window:minimize', () => mainWindow?.minimize())
   ipcMain.handle('window:close',    () => mainWindow?.close())

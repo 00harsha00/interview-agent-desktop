@@ -20,7 +20,7 @@ async function request<T>(
   const url = `${BACKEND_URL}${path}`
   const res = await fetch(url, {
     ...options,
-    credentials: 'include',
+    credentials: 'omit',    // cookie injected by main process; avoids null-origin CORS block
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,
@@ -193,7 +193,7 @@ export function streamAIAnswer(
 ): void {
   fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
-    credentials: 'include',
+    credentials: 'omit',    // cookie injected by main process; avoids null-origin CORS block
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       callSessionId,
