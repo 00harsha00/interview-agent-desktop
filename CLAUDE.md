@@ -13,6 +13,15 @@ Real-time AI interview assistant overlay. electron-vite (out/) + electron-builde
 - Icons: generated from `resources/icon.svg` via `npm run icons` (sharp + iconutil +
   png-to-ico). Replace icon.svg and re-run to change branding.
 
+## Releasing a new version
+1. Make and test your changes
+2. `npm version patch` (patch=bugfix, minor=feature, major=breaking)
+3. Set real GH_TOKEN in .env.production
+4. `npm run release:all`
+5. GitHub Release created automatically with DMG + EXE
+6. `git push origin main --tags`
+7. Installed apps auto-update on next launch
+
 ## Stealth flags (automatic — no manual flipping)
 
 `CONTENT_PROTECTION` and `HIDE_DOCK_ICON` in `src/main/index.ts` are `!IS_DEV`:

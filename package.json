@@ -1,6 +1,6 @@
 {
   "name": "iai-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "IAI — Real-time AI interview assistant desktop overlay",
   "author": "IAI",
   "main": "out/main/index.js",
@@ -14,6 +14,9 @@
     "dist:mac": "rimraf dist out && electron-vite build && electron-builder --mac",
     "dist:win": "rimraf dist out && electron-vite build && electron-builder --win",
     "dist:all": "rimraf dist out && electron-vite build && electron-builder --mac --win",
+    "release:mac": "rimraf dist out && electron-vite build && electron-builder --mac --publish always",
+    "release:win": "rimraf dist out && electron-vite build && electron-builder --win --publish always",
+    "release:all": "rimraf dist out && electron-vite build && electron-builder --mac --win --publish always",
     "install:mac": "npm run dist:mac && pkill -x IAI; rm -rf /Applications/IAI.app && ditto dist/mac-arm64/IAI.app /Applications/IAI.app && rm -rf dist/mac-arm64 && open /Applications/IAI.app"
   },
   "devDependencies": {
@@ -33,6 +36,7 @@
     "vite": "^5.4.11"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -40,6 +44,13 @@
     "appId": "com.iai.desktop",
     "productName": "IAI",
     "icon": "resources/icon",
+    "publish": {
+      "provider": "github",
+      "owner": "00harsha00",
+      "repo": "interview-agent-desktop",
+      "private": true,
+      "releaseType": "release"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "target": "dmg",

@@ -2,6 +2,8 @@ import {
   app, BrowserWindow, ipcMain, globalShortcut,
   shell, session, desktopCapturer, nativeTheme, screen,
 } from 'electron'
+import electronUpdater from 'electron-updater'
+const { autoUpdater } = electronUpdater
 import { join } from 'path'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import * as http from 'http'
@@ -794,6 +796,24 @@ app.whenReady().then(async () => {
 
   createWindow()
   registerShortcuts()
+
+  // ── Auto-update (packaged builds only) ──────────────────────────────────────
+  if (app.isPackaged) {
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = true
+    setTimeout(() => {
+      autoUpdater.checkForUpdatesAndNotify().catch((e) => console.error('[updater] check failed:', e?.message))
+    }, 5000)
+    autoUpdater.on('update-available', (info) => {
+      console.log('[updater] Update available:', info.version)
+    })
+    autoUpdater.on('update-downloaded', () => {
+      console.log('[updater] Downloaded — installs on quit')
+    })
+    autoUpdater.on('error', (err) => {
+      console.error('[updater] Error:', err?.message)
+    })
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
