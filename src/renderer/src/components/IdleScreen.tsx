@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { AIModel, AuthUser, CallSession } from '@/types'
 import { AI_MODEL_LABELS, FRONTEND_URL } from '@/config'
-import { createSession, getUserResumes } from '@/lib/api'
-import type { UserResume } from '@/lib/api'
+import { createSession, getUserResumes, getUserDocuments } from '@/lib/api'
+import type { UserResume, UserDocument } from '@/lib/api'
 
 interface Props {
   user: AuthUser
@@ -45,6 +45,7 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
   const [creating,     setCreating]     = useState(false)
   const [createErr,    setCreateErr]    = useState<string | null>(null)
   const [resumes,      setResumes]      = useState<UserResume[]>([])
+  const [documents,    setDocuments]    = useState<UserDocument[]>([])
 
   // form fields
   const [company,      setCompany]      = useState('')
@@ -52,6 +53,7 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
   const [jd,           setJd]           = useState('')
   const [extraCtx,     setExtraCtx]     = useState('')
   const [resumeId,     setResumeId]     = useState('')
+  const [documentIds,  setDocumentIds]  = useState<string[]>([])
   const [lang,         setLang]         = useState('en')
   const [mode,         setMode]         = useState<'FREE' | 'DESKTOP'>('DESKTOP')
   const [aiModel,      setAiModel]      = useState<AIModel>('GPT4O')
@@ -66,6 +68,7 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
     if (view === 'create') {
       window.electronAPI.window.setHeight(CREATE_H)
       getUserResumes().then(setResumes).catch(() => {})
+      getUserDocuments().then(setDocuments).catch(() => {})
       setTimeout(() => companyRef.current?.focus(), 80)
     } else {
       window.electronAPI.window.setHeight(IDLE_H)
@@ -83,10 +86,18 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
     if (!jd.trim()) { setCreateErr('Job description is required.'); return }
     setCreating(true); setCreateErr(null)
     try {
+      // Merge extra context into the job description text — there's no
+      // dedicated column for it on CallSession, so this is the same trick
+      // the browser's NewSessionModal uses. Without this, extraCtx was pure
+      // dead UI: typed into the textarea but never sent anywhere.
+      const fullJobDescription = extraCtx?.trim()
+        ? `${jd.trim()}\n\n---\nExtra Context:\n${extraCtx.trim()}`
+        : jd.trim()
       const session = await createSession({
         companyName:   company.trim(),
-        jobDescription: jd.trim(),
+        jobDescription: fullJobDescription,
         resumeId:      resumeId || undefined,
+        documentIds,
         language:      lang,
         mode,
         autoGenerate:  false,
@@ -96,6 +107,10 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
     } catch (err) {
       setCreateErr((err as Error).message ?? 'Failed to create session.')
     } finally { setCreating(false) }
+  }
+
+  const toggleDocument = (id: string) => {
+    setDocumentIds((prev) => prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id])
   }
 
   const initials = (user.name ?? user.email)
@@ -292,7 +307,7 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
           </Field>
 
           {/* Resume */}
-          <Field label="Resume / Document">
+          <Field label="Resume">
             <select value={resumeId} onChange={e => setResumeId(e.target.value)}
               style={{ ...fieldStyle, appearance: 'none', cursor: 'pointer' }}
               onFocus={e => (e.currentTarget.style.boxShadow = focusStyle)}
@@ -302,6 +317,32 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
                 <option key={r.id} value={r.id}>{r.fileName}</option>
               ))}
             </select>
+          </Field>
+
+          {/* Documents — multi-select, mirrors the browser's NewSessionModal */}
+          <Field label={`Documents${documentIds.length ? ` (${documentIds.length} selected)` : ''}`}>
+            {documents.length === 0 ? (
+              <p className="text-[11px] text-white/25">No documents uploaded yet.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {documents.map((d) => {
+                  const selected = documentIds.includes(d.id)
+                  return (
+                    <button key={d.id} type="button" onClick={() => toggleDocument(d.id)}
+                      className="px-2 py-1 rounded-lg text-[10.5px] font-medium transition-all truncate max-w-[160px]"
+                      style={{
+                        background: selected ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.05)',
+                        boxShadow: selected ? 'inset 0 0 0 1.5px rgba(99,102,241,0.55)' : 'inset 0 0 0 1px rgba(255,255,255,0.09)',
+                        color: selected ? '#a5b4fc' : 'rgba(255,255,255,0.55)',
+                      }}
+                      title={d.name}
+                    >
+                      {selected ? '✓ ' : ''}{d.name}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </Field>
 
           {/* Language */}

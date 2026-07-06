@@ -180,6 +180,24 @@ export async function getResumeContent(id: string): Promise<string | null> {
   }
 }
 
+// ─── Documents ────────────────────────────────────────────────────────────────
+export interface UserDocument {
+  id: string
+  name: string
+  fileName: string
+  fileSize: number
+  mimeType: string
+  createdAt: string
+}
+
+export async function getUserDocuments(): Promise<UserDocument[]> {
+  try {
+    return await trpcQuery<UserDocument[]>('callDocument.getMany')
+  } catch {
+    return []
+  }
+}
+
 // ─── AI chat (SSE streaming) ──────────────────────────────────────────────────
 export function streamAIAnswer(
   callSessionId: string,

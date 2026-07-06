@@ -1,6 +1,7 @@
 import {
   app, BrowserWindow, ipcMain, globalShortcut,
   shell, session, desktopCapturer, nativeTheme, screen,
+  systemPreferences,
 } from 'electron'
 import electronUpdater from 'electron-updater'
 const { autoUpdater } = electronUpdater
@@ -1000,25 +1001,67 @@ function registerShortcuts(): void {
     }
   })
 
+  // macOS: globalShortcut itself doesn't require Accessibility permission for
+  // ordinary accelerators, but a shortcut can still silently fail to FIRE
+  // (as opposed to failing to REGISTER) on machines where the OS is
+  // withholding input-monitoring-adjacent permissions. Logged for
+  // diagnosis — isTrustedAccessibilityClient(true) also prompts the user to
+  // grant it if missing, in case that's a factor on this machine.
+  if (process.platform === 'darwin') {
+    const hasAccess = systemPreferences.isTrustedAccessibilityClient(false)
+    console.log('[accessibility] trusted:', hasAccess)
+    if (!hasAccess) {
+      systemPreferences.isTrustedAccessibilityClient(true)
+    }
+  }
+
   // Global "bring app to front" shortcut — works even when the app is
-  // hidden/backgrounded or collapsed to the mini pill. Ctrl+Cmd+I is the
-  // primary binding (macOS); Ctrl+Shift+I is registered ADDITIONALLY, and
-  // only on Windows, since that combo is the DevTools toggle on Mac and
-  // would collide with it there.
+  // hidden/backgrounded or collapsed to the mini pill. Tries Ctrl+Cmd+I
+  // first; if that specific combo is already claimed by something else on
+  // this machine (register() returns false rather than throwing), falls
+  // through alternates in order until one actually registers.
+  // activeFocusAccelerator records whichever one is live so the renderer's
+  // toast can display the accelerator that's really wired up, not a
+  // hardcoded assumption.
   const focusApp = (): void => {
+    console.log('[shortcut] focus-app shortcut fired, accelerator:', activeFocusAccelerator)
     mainWindow?.webContents.send('shortcut:restore-from-mini')
     bringToFront()
-    mainWindow?.webContents.send('shortcut:app-focused')
+    mainWindow?.webContents.send('shortcut:app-focused', activeFocusAccelerator)
   }
-  const focusAccelerators = ['Control+Command+I', ...(process.platform === 'win32' ? ['Control+Shift+I'] : [])]
-  focusAccelerators.forEach((accelerator) => {
+
+  let activeFocusAccelerator: string | null = null
+  const focusAcceleratorCandidates = [
+    'Control+Command+I',
+    'CommandOrControl+Shift+Space',
+    'Alt+Command+I',
+    'Control+Shift+Space',
+  ]
+  for (const accelerator of focusAcceleratorCandidates) {
     try {
       const ok = globalShortcut.register(accelerator, focusApp)
-      if (!ok) console.warn(`[main] Could not register shortcut: ${accelerator}`)
+      console.log(`[shortcut] ${accelerator} registered:`, ok)
+      if (ok) { activeFocusAccelerator = accelerator; break }
     } catch (err) {
       console.warn(`[main] Shortcut registration failed for ${accelerator}:`, err)
     }
-  })
+  }
+  if (!activeFocusAccelerator) {
+    console.warn('[shortcut] No focus-app accelerator could be registered on this machine')
+  }
+
+  // Windows-only: also register Ctrl+Shift+I, in ADDITION to whichever
+  // accelerator above ended up active. Ctrl+Shift+I is the DevTools toggle
+  // on Mac (hence excluded there) but a natural, expected "bring to front"
+  // binding on Windows.
+  if (process.platform === 'win32') {
+    try {
+      const ok = globalShortcut.register('Control+Shift+I', focusApp)
+      console.log('[shortcut] Control+Shift+I (Windows) registered:', ok)
+    } catch (err) {
+      console.warn('[main] Shortcut registration failed for Control+Shift+I:', err)
+    }
+  }
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────

@@ -36,16 +36,36 @@ function useMousePassthrough() {
   }, [])
 }
 
+// Converts an Electron accelerator string (e.g. 'Control+Command+I') into
+// its on-screen keyboard-symbol form (e.g. '⌃⌘I') for the focus toast —
+// main sends whichever accelerator actually ended up registered (it tries
+// several in order, see registerShortcuts in main/index.ts), so this can't
+// be a hardcoded label.
+const ACCELERATOR_SYMBOLS: Record<string, string> = {
+  Control: '⌃', Ctrl: '⌃',
+  Command: '⌘', Cmd: '⌘',
+  CommandOrControl: '⌘', CmdOrCtrl: '⌘',
+  Alt: '⌥', Option: '⌥',
+  Shift: '⇧',
+  Space: 'Space',
+}
+function formatAccelerator(accelerator: string | null | undefined): string {
+  if (!accelerator) return ''
+  return accelerator.split('+').map((part) => ACCELERATOR_SYMBOLS[part] ?? part).join('')
+}
+
 // ── Focus toast — brief "App focused" acknowledgment for the global
-// Ctrl+Cmd+I shortcut. Mounted as its own always-present sibling of <App/>
-// (see main.tsx) rather than inside App's own JSX, since App has several
-// early-return branches (loading/auth/idle/mini/session) and the toast needs
-// to show regardless of which one is currently active.
+// bring-to-front shortcut. Mounted as its own always-present sibling of
+// <App/> (see main.tsx) rather than inside App's own JSX, since App has
+// several early-return branches (loading/auth/idle/mini/session) and the
+// toast needs to show regardless of which one is currently active.
 export function FocusToast() {
   const [visible, setVisible] = useState(false)
+  const [accelerator, setAccelerator] = useState<string | null>(null)
   useEffect(() => {
     let hideTimer: ReturnType<typeof setTimeout> | undefined
-    const unsub = window.electronAPI.on('shortcut:app-focused', () => {
+    const unsub = window.electronAPI.on('shortcut:app-focused', (accel: unknown) => {
+      setAccelerator((accel as string) ?? null)
       setVisible(true)
       clearTimeout(hideTimer)
       hideTimer = setTimeout(() => setVisible(false), 1500)
@@ -73,7 +93,7 @@ export function FocusToast() {
         transition: 'opacity 0.3s ease',
       }}
     >
-      App focused ⌃⌘I
+      App focused{accelerator ? ` ${formatAccelerator(accelerator)}` : ''}
     </div>,
     document.body,
   )

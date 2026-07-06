@@ -14,6 +14,8 @@
 import React, {
   useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/atom-one-dark.css'
 import { cn } from '@/lib/utils'
 import { SESSION_PING_MS, TRANSCRIPT_SAVE_MS, SILENCE_TRIGGER_MS, AI_MODEL_LABELS } from '@/config'
 import {
@@ -2020,7 +2022,7 @@ const AnswerPanel = React.memo(function AnswerPanel({
             </div>
             <div className="flex gap-2">
               <span className="text-[14px] leading-none mt-0.5 flex-shrink-0">⭐</span>
-              <div className="flex-1 min-w-0"><AnswerText content={currentPair.answer} fontSize={fontSize} /></div>
+              <div className="flex-1 min-w-0"><AnswerText content={currentPair.answer} fontSize={fontSize} isStreaming={isStreaming} /></div>
             </div>
             <div className="flex items-center justify-between pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
               <span className="text-[9.5px] text-white/20 font-mono">
@@ -2305,8 +2307,87 @@ function TextBlocks({ text, fontSize }: { text: string; fontSize: number }) {
   return <>{blocks}</>
 }
 
+// Markdown fence tag → highlight.js language name. Most tags (python, sql,
+// javascript…) already ARE valid hljs names/aliases and need no mapping;
+// this only covers the couple of common tags whose casing/spelling hljs
+// doesn't register as an alias by default.
+const FALLBACK_NBSP = ' ' // keeps empty lines from collapsing to zero height
+const FENCE_LANG_ALIASES: Record<string, string> = {
+  js: 'javascript', jsx: 'javascript',
+  ts: 'typescript', tsx: 'typescript',
+  py: 'python',
+  sh: 'bash', shell: 'bash', zsh: 'bash',
+  yml: 'yaml',
+}
+
+// ─── CodeBlock — syntax-highlighted (highlight.js, atom-one-dark) with a
+// language badge and copy button. While the answer is still streaming,
+// partial/incomplete code breaks hljs's parser (unclosed strings, brackets,
+// etc. mid-token), so it renders plain monospace until streaming finishes.
+function CodeBlock({ code, language, isStreaming }: { code: string; language?: string; isStreaming: boolean }) {
+  const ref = useRef<HTMLElement>(null)
+  const [copied, setCopied] = useState(false)
+  const [detectedLang, setDetectedLang] = useState<string | undefined>(language)
+
+  const resolvedLang = language ? (FENCE_LANG_ALIASES[language] ?? language) : undefined
+
+  useEffect(() => {
+    if (isStreaming) return
+    const el = ref.current
+    if (!el) return
+    el.removeAttribute('data-highlighted')
+    if (resolvedLang && hljs.getLanguage(resolvedLang)) {
+      el.innerHTML = hljs.highlight(code, { language: resolvedLang }).value
+      setDetectedLang(resolvedLang)
+    } else {
+      const result = hljs.highlightAuto(code)
+      el.innerHTML = result.value
+      setDetectedLang(result.language)
+    }
+  }, [code, resolvedLang, isStreaming])
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  const badgeBtnStyle: React.CSSProperties = {
+    fontSize: 10, fontFamily: 'monospace', textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.9)', letterSpacing: '0.03em',
+  }
+
+  return (
+    <div className="answer-code-block" style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', background: '#282c34', margin: '8px 0' }}>
+      <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 10, alignItems: 'center', zIndex: 1 }}>
+        {!isStreaming && detectedLang && (
+          <span style={{ ...badgeBtnStyle, opacity: 0.5, userSelect: 'none' }}>{detectedLang}</span>
+        )}
+        <button
+          onClick={handleCopy}
+          style={{ ...badgeBtnStyle, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, opacity: copied ? 1 : 0.5, transition: 'opacity 0.15s ease' }}
+          onMouseOver={(e) => { e.currentTarget.style.opacity = '1' }}
+          onMouseOut={(e) => { e.currentTarget.style.opacity = copied ? '1' : '0.5' }}
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
+      <pre className="text-[11px] font-mono overflow-x-auto whitespace-pre" style={{ borderRadius: 8, padding: '12px 16px', margin: 0, fontSize: 'inherit', lineHeight: 1.6, background: '#282c34' }}>
+        {isStreaming ? (
+          code.split('\n').map((line, li) => (
+            <div key={li} className="code-line text-green-200/75" style={{ margin: '0 -16px', padding: '0 16px' }}>{line || FALLBACK_NBSP}</div>
+          ))
+        ) : (
+          <code ref={ref} className={resolvedLang ? `language-${resolvedLang}` : ''} />
+        )}
+      </pre>
+    </div>
+  )
+}
+
 // ─── AnswerText — markdown-aware renderer ────────────────────────────────────
-function AnswerText({ content, fontSize }: { content: string; fontSize: number }) {
+function AnswerText({ content, fontSize, isStreaming }: { content: string; fontSize: number; isStreaming: boolean }) {
   const segments = content.split(/(```[\s\S]*?```)/g)
   return (
     <div className="space-y-1.5" style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' } as React.CSSProperties}>
@@ -2314,21 +2395,9 @@ function AnswerText({ content, fontSize }: { content: string; fontSize: number }
         if (seg.startsWith('```')) {
           const inner = seg.slice(3, -3)
           const nlIdx = inner.indexOf('\n')
-          const lang  = nlIdx > 0 ? inner.slice(0, nlIdx).trim() : ''
+          const lang  = nlIdx > 0 ? inner.slice(0, nlIdx).trim().toLowerCase() : ''
           const code  = nlIdx >= 0 ? inner.slice(nlIdx + 1) : inner
-          return (
-            <div key={i} className="overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.07)', borderRadius: 8 }}>
-              {lang && (
-                <div className="px-3 py-1 text-[9px] text-white/30 font-mono uppercase tracking-wider"
-                     style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.06)' }}>{lang}</div>
-              )}
-              <pre className="text-[11px] font-mono text-green-200/75 overflow-x-auto whitespace-pre leading-relaxed" style={{ padding: '12px 16px' }}>
-                {code.split('\n').map((line, li) => (
-                  <div key={li} className="code-line" style={{ margin: '0 -16px', padding: '0 16px' }}>{line || ' '}</div>
-                ))}
-              </pre>
-            </div>
-          )
+          return <CodeBlock key={i} code={code} language={lang || undefined} isStreaming={isStreaming} />
         }
         return <TextBlocks key={i} text={seg} fontSize={fontSize} />
       })}
