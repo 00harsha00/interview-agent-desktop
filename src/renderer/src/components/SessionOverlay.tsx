@@ -28,60 +28,103 @@ import type { AIModel, CallSession, TranscriptEntry, SmConnectionState } from '@
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function uid() { return Math.random().toString(36).slice(2) }
-function fmt(s: number) {
-  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-}
 
 interface QAPair { id: string; question: string; answer: string; ts: Date }
 
 // Electron window heights
 const TOOLBAR_H  = 48
 const MODAL_H    = 320
-// Popover sizing (Task 2)
-const POPOVER_GAP = 6
-const POPOVER_W     = 300        // fixed popover width
-const POPOVER_MAX_H = 480        // internal scroll cap for the ":" menu body
-const MAX_TOTAL_HEIGHT_RATIO = 0.9 // hard ceiling while the popover forces extra room
+// Popover sizing/position all live in main now (popover:* IPC, its own
+// BrowserWindow, positionPopoverWindow) — nothing left to track here.
+
+// Answer/transcript/chat text size — user-adjustable via the popover's
+// "Text Size" row, persisted independently of the Zoom control (which scales
+// the whole overlay chrome, not just reading text).
+const FONT_SIZE_MIN     = 11
+const FONT_SIZE_MAX     = 20
+const FONT_SIZE_DEFAULT = 14
 
 // ─── Tiny shared components ───────────────────────────────────────────────────
 
 function Kbd({ s }: { s: string }) {
-  return <span className="text-[9px] text-white/30 font-mono ml-0.5">{s}</span>
+  return <span className="text-white text-[10px] font-mono ml-0.5" style={{ opacity: 0.5 }}>{s}</span>
 }
 
 function Sep() {
   return <div className="w-px h-4 flex-shrink-0" style={{ background: 'rgba(255,255,255,0.1)' }} />
 }
 
-/**
- * Real-time VU meter bars.
- * When `level` > 0 the bars reflect actual PCM amplitude (from AudioWorklet RMS).
- * Falls back to CSS wave animation while active but before audio arrives.
- */
-function WaveBars({ active, level = 0 }: { active: boolean; level?: number }) {
-  const weights = [0.5, 1, 0.65, 0.85, 0.45]
-  const hasLevel = active && level > 0.01
+/** Bold collapse chevron — heavier and larger than a plain "∧" glyph */
+function ChevronUp() {
   return (
-    <div className="flex items-end gap-[2px] h-4 w-5 flex-shrink-0">
-      {weights.map((w, i) => (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <polyline points="2,10 7,4 12,10" stroke="rgba(255,255,255,0.85)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/**
+ * Toolbar logo — an animated equalizer/waveform in place of a static "IA"
+ * mark. Bars bounce (CSS keyframes, staggered delay/duration per bar so they
+ * don't move in lockstep) while `active` — i.e. mic or system audio is
+ * actually on — and freeze at mid-height otherwise.
+ */
+// Each bar gets its own min/max height range, delay, and keyframe name —
+// the asymmetric heights (10/14/16/10) plus staggered delays are what make
+// four bars read as a natural equalizer instead of four bars in lockstep.
+const EQ_BARS = [
+  { min: 3, max: 14, delay: 0,     duration: 0.9 },
+  { min: 3, max: 10, delay: 0.15,  duration: 0.7 },
+  { min: 3, max: 16, delay: 0.075, duration: 1.0 },
+  { min: 3, max: 10, delay: 0.225, duration: 0.8 },
+]
+const EQ_BAR_STATIC_H = 8
+
+/**
+ * Bare animated equalizer bars — ghost/frosted-glass style, no container.
+ * Exported so the collapsed mini-bar pill (App.tsx) can reuse the exact same
+ * icon+animation without the toolbar's gradient-square backing.
+ */
+export function WaveformBars({ active }: { active: boolean }) {
+  return (
+    <div className="flex items-end" style={{ gap: 2, height: 16 }}>
+      <style>{`
+        ${EQ_BARS.map((b, i) => `
+          @keyframes eqBar${i} {
+            0%, 100% { height: ${b.min}px; }
+            50% { height: ${b.max}px; }
+          }
+        `).join('')}
+      `}</style>
+      {EQ_BARS.map((b, i) => (
         <div
           key={i}
-          className={cn('w-[2.5px] rounded-full', active ? 'bg-indigo-400' : 'bg-white/20')}
           style={{
-            // Real level: scale each bar by its weight so they look natural
-            height: hasLevel
-              ? `${Math.max(2, level * w * 14)}px`
-              : active
-                ? `${4 + w * 9}px`
-                : '2.5px',
-            animation: !hasLevel && active
-              ? `wave ${0.45 + i * 0.08}s ease-in-out infinite alternate`
-              : 'none',
-            animationDelay: `${i * 0.06}s`,
-            transition: hasLevel ? 'height 0.07s ease' : 'height 0.2s ease, background 0.2s ease',
+            width: 2.5,
+            borderRadius: 2,
+            height: active ? undefined : EQ_BAR_STATIC_H,
+            // Ghost/frosted white — no drop-shadow/glow filter: on a fully
+            // transparent Electron window a glow filter has the same
+            // "blurring nothing" risk that's produced white-halo artifacts
+            // elsewhere in this app, so the bars stay a plain translucent
+            // fill only, brighter while animating, dimmer when static.
+            background: active ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)',
+            animation: active ? `eqBar${i} ${b.duration}s ease-in-out ${b.delay}s infinite` : 'none',
+            transition: 'height 0.2s ease, background-color 0.2s ease',
           }}
         />
       ))}
+    </div>
+  )
+}
+
+function LogoWaveform({ active }: { active: boolean }) {
+  return (
+    <div
+      className="h-5 w-5 rounded-lg flex items-center justify-center flex-shrink-0"
+      style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 2px 6px rgba(99,102,241,0.35)' }}
+    >
+      <WaveformBars active={active} />
     </div>
   )
 }
@@ -106,14 +149,15 @@ function AnswerBtn({ disabled, onClick, streaming }: { disabled?: boolean; onCli
       onClick={() => onClick()}
       disabled={disabled}
       className={cn(
-        'flex items-center justify-center gap-1.5 px-4 h-8 rounded-xl text-[13px] font-bold select-none transition-all',
+        'flex items-center justify-center gap-1.5 px-3 h-8 rounded-xl text-[13px] font-bold select-none transition-all',
         'disabled:opacity-30 disabled:cursor-not-allowed text-white',
         streaming ? 'cursor-wait' : 'hover:brightness-110 active:scale-[0.98]',
       )}
       style={{
         background: 'linear-gradient(135deg,#16a34a,#22c55e)',
         boxShadow: '0 2px 10px rgba(34,197,94,0.35), inset 0 0 0 1px rgba(255,255,255,0.15)',
-        minWidth: 132,   // fixed footprint — never moves or resizes with state
+        minWidth: 118,   // fixed footprint — never moves or resizes with state
+        flexShrink: 0,
       } as React.CSSProperties}
     >
       {streaming ? (
@@ -142,7 +186,7 @@ function TBtn({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'flex items-center gap-1.5 px-2.5 h-7 rounded-lg text-[11.5px] font-medium select-none transition-all',
+        'flex items-center gap-1 px-2 h-7 rounded-lg text-[11.5px] font-medium select-none transition-all flex-shrink-0',
         'disabled:opacity-25 disabled:cursor-not-allowed',
         active
           ? 'text-white'
@@ -197,7 +241,7 @@ function IBtn({
   )
 }
 
-// ─── ":" menu contents — rendered inside the floating SettingsPopover ────────
+// ─── ":" menu contents — rendered inside the settings popover window ────────
 const LANGUAGES: Array<[string, string]> = [
   ['en', 'English'], ['hi', 'Hindi'], ['te', 'Telugu'], ['ta', 'Tamil'],
   ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['zh', 'Chinese'],
@@ -206,15 +250,15 @@ const LANGUAGES: Array<[string, string]> = [
 
 function SettingsPanel({
   userEmail, zoom, opacity, autoGen, autoDetect, privateMode, language,
-  extraContext, aiModel, snapPos,
+  extraContext, aiModel, snapPos, fontSize,
   onZoom, onZoomReset, onOpacity, onOpacityReset,
   onAutoGen, onAutoDetect, onPrivate, onLanguage,
-  onExtraContext, onModelChange, onMove, onExit, onEnd, onClose,
+  onExtraContext, onModelChange, onMove, onExit, onEnd, onClose, onFontSize,
 }: {
   userEmail?: string
   zoom: number; opacity: number; autoGen: boolean; autoDetect: boolean
   privateMode: boolean; language: string
-  extraContext: string; aiModel: AIModel; snapPos: SnapPos
+  extraContext: string; aiModel: AIModel; snapPos: SnapPos; fontSize: number
   onZoom: (d: number) => void; onZoomReset: () => void
   onOpacity: (d: number) => void; onOpacityReset: () => void
   onAutoGen: (v: boolean) => void; onAutoDetect: (v: boolean) => void
@@ -222,8 +266,25 @@ function SettingsPanel({
   onExtraContext: (v: string) => void
   onModelChange: (m: AIModel) => void; onMove: (p: SnapPos) => void
   onExit: () => void; onEnd: () => void; onClose: () => void
+  onFontSize: (size: number) => void
 }) {
-  const rowShadow = { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)' }
+  // 1px hairline divider with a tight 4px margin (space above the line only —
+  // each row supplies its own 6px py-1.5 below it) instead of a padded shadow
+  // strip — matches the "macOS menu bar" density the compact redesign wants.
+  const rowDivider = { borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: 4 }
+
+  const [displays, setDisplays] = useState<Array<{ id: number; label: string; isPrimary: boolean }>>([])
+  const [currentDisplayId, setCurrentDisplayId] = useState<number | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.window.getDisplays().then(({ displays, currentId }) => {
+      if (cancelled) return
+      setDisplays(displays)
+      setCurrentDisplayId(currentId)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   return (
     <div
       className="anim-in"
@@ -233,26 +294,31 @@ function SettingsPanel({
       }}
     >
       {/* Header — account email (read-only) + close. Fixed, does not scroll. */}
-      <div className="flex items-center justify-between px-3 py-2" style={rowShadow}>
-        <span className="text-[10.5px] text-white/55 font-medium truncate max-w-[200px]" title={userEmail}>
+      <div className="flex items-center justify-between px-3 py-1.5">
+        <span className="text-[12px] text-white/55 font-medium truncate max-w-[200px]" title={userEmail}>
           {userEmail ?? 'Signed in'}
         </span>
         <button
           onMouseDown={(e) => { e.preventDefault(); onClose() }}
-          className="text-[10px] text-white/30 hover:text-white/70 transition-colors px-2 h-5 rounded-md hover:bg-white/8 flex items-center gap-1 flex-shrink-0"
+          className="text-[12px] text-white/30 hover:text-white/70 transition-colors px-2 h-5 rounded-md hover:bg-white/8 flex items-center gap-1 flex-shrink-0"
           style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.08)' }}
         >
           ✕
         </button>
       </div>
 
-      {/* Scrollable body — caps the popover's own height independently of the window fit */}
-      <div style={{ maxHeight: POPOVER_MAX_H, overflowY: 'auto', scrollbarWidth: 'none' }}>
+      {/* Body — no maxHeight/scroll of its own: the popover window (see main
+          process positionPopoverWindow) sizes itself to fit this content's
+          real natural height exactly, so nothing here should ever need to
+          scroll internally. The outer SettingsPopoverWindow wrapper still
+          carries a scroll fallback for the rare case a screen is too short
+          to fit the whole menu even at the edges. */}
+      <div className="px-3 pb-1.5">
         {/* Dashboard */}
-        <div className="px-3 py-1.5" style={rowShadow}>
+        <div style={rowDivider}>
           <button
             onClick={() => { window.electronAPI.shell.openExternal(`${FRONTEND_URL}/dashboard`); onClose() }}
-            className="w-full text-left text-[11px] text-white/55 hover:text-indigo-300 transition-colors flex items-center gap-1.5 py-1"
+            className="w-full text-left text-[12px] text-white/55 hover:text-indigo-300 transition-colors flex items-center gap-1.5 py-1.5"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -261,49 +327,47 @@ function SettingsPanel({
           </button>
         </div>
 
-        {/* Toggles: Private / Auto-detect */}
-        <div className="flex flex-col gap-2 px-3 py-2.5" style={rowShadow}>
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-white/35" title="Hide the overlay from screen shares and recordings">Private</span>
-            <Toggle on={privateMode} onToggle={() => onPrivate(!privateMode)} />
+        {/* ROW 1: Private | Auto-detect — side by side, 50/50 */}
+        <div className="grid grid-cols-2" style={rowDivider}>
+          <div className="flex items-center justify-between py-1.5 pr-2"
+               style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }}>
+            <span className="text-[12px] text-white/35" title="Hide the overlay from screen shares and recordings">Private</span>
+            <Toggle checked={privateMode} onChange={() => onPrivate(!privateMode)} />
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] text-white/35" title="Detect questions from the live transcript">Auto-detect</span>
-            <Toggle on={autoDetect} onToggle={() => onAutoDetect(!autoDetect)} />
+          <div className="flex items-center justify-between py-1.5 pl-2">
+            <span className="text-[12px] text-white/35" title="Detect questions from the live transcript">Auto-detect</span>
+            <Toggle checked={autoDetect} onChange={() => onAutoDetect(!autoDetect)} />
           </div>
         </div>
 
-        {/* Zoom / Opacity steppers with reset */}
-        <div className="flex flex-col gap-2 px-3 py-2.5" style={rowShadow}>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-white/35 w-14 flex-shrink-0">Zoom</span>
+        {/* ROW 2: Zoom | Opacity — side by side, 50/50. Reset collapses to a
+            ↺ icon button (matching the −/+ steppers) so it fits the half-width
+            column instead of the old full-width text button. */}
+        <div className="grid grid-cols-2" style={rowDivider}>
+          <div className="flex items-center gap-1 py-1.5 pr-2"
+               style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }}>
+            <span className="text-[11px] text-white/35 flex-shrink-0">Zoom</span>
             <MiniBtn onClick={() => onZoom(-0.1)}>−</MiniBtn>
-            <span className="text-[10px] text-white/50 w-9 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+            <span className="text-[11px] text-white/50 flex-1 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
             <MiniBtn onClick={() => onZoom(+0.1)}>+</MiniBtn>
-            <button onClick={onZoomReset}
-              className="text-[9px] text-white/25 hover:text-white/60 px-1.5 py-0.5 rounded-md hover:bg-white/8 transition-colors">
-              Reset
-            </button>
+            <MiniBtn onClick={onZoomReset}>↺</MiniBtn>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-white/35 w-14 flex-shrink-0">Opacity</span>
+          <div className="flex items-center gap-1 py-1.5 pl-2">
+            <span className="text-[11px] text-white/35 flex-shrink-0">Opacity</span>
             <MiniBtn onClick={() => onOpacity(-0.1)}>−</MiniBtn>
-            <span className="text-[10px] text-white/50 w-9 text-center tabular-nums">{Math.round(opacity * 100)}%</span>
+            <span className="text-[11px] text-white/50 flex-1 text-center tabular-nums">{Math.round(opacity * 100)}%</span>
             <MiniBtn onClick={() => onOpacity(+0.1)}>+</MiniBtn>
-            <button onClick={onOpacityReset}
-              className="text-[9px] text-white/25 hover:text-white/60 px-1.5 py-0.5 rounded-md hover:bg-white/8 transition-colors">
-              Reset
-            </button>
+            <MiniBtn onClick={onOpacityReset}>↺</MiniBtn>
           </div>
         </div>
 
         {/* Language */}
-        <div className="flex items-center gap-3 px-3 py-2" style={rowShadow}>
-          <span className="text-[10px] text-white/35 flex-shrink-0 w-14">Language</span>
+        <div className="flex items-center gap-3 py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35 flex-shrink-0 w-14">Language</span>
           <select
             value={language}
             onChange={(e) => onLanguage(e.target.value)}
-            className="flex-1 px-2 py-1 rounded-lg text-[11px] outline-none cursor-pointer"
+            className="flex-1 px-2 py-1 rounded-lg text-[12px] outline-none cursor-pointer"
             style={{
               background: 'rgba(255,255,255,0.05)',
               boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.1)',
@@ -318,53 +382,79 @@ function SettingsPanel({
         </div>
 
         {/* Auto Generate */}
-        <div className="flex items-center justify-between px-3 py-2.5" style={rowShadow}>
-          <span className="text-[10px] text-white/35" title="Automatically send detected questions to the AI (requires Auto-detect)">Auto Generate</span>
-          <Toggle on={autoGen} onToggle={() => onAutoGen(!autoGen)} />
+        <div className="flex items-center justify-between py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35" title="Automatically send detected questions to the AI (requires Auto-detect)">Auto Generate</span>
+          <Toggle checked={autoGen} onChange={() => onAutoGen(!autoGen)} />
         </div>
 
-        {/* Model */}
-        <div className="flex items-start gap-1.5 px-3 py-2 flex-wrap" style={rowShadow}>
-          <span className="text-[10px] text-white/35 flex-shrink-0 w-14 pt-1">Model</span>
-          <div className="flex flex-wrap gap-1 flex-1 min-w-0">
+        {/* Model — compact dropdown instead of a button-per-model grid, saves
+            4-5 rows of vertical space for the same information. */}
+        <div className="flex items-center gap-3 py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35 flex-shrink-0 w-14">Model</span>
+          <select
+            value={aiModel}
+            onChange={(e) => onModelChange(e.target.value as AIModel)}
+            className="flex-1 px-2 py-1 rounded-lg text-[12px] outline-none cursor-pointer"
+            style={{
+              background: 'rgba(255,255,255,0.05)',
+              boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.1)',
+              color: '#ffffff',
+              appearance: 'none',
+            }}
+          >
             {Object.entries(AI_MODEL_LABELS).map(([value, label]) => (
-              <button key={value} onClick={() => { onModelChange(value as AIModel); onClose() }}
-                className={cn('px-2 py-1 rounded-lg text-[10px] font-medium transition-all flex items-center gap-1',
-                  aiModel === value
-                    ? 'bg-indigo-500/25 text-indigo-300 ring-1 ring-indigo-400/30'
-                    : 'text-white/40 hover:text-white/70 hover:bg-white/8')}>
-                {aiModel === value && <span className="text-[8px]">✓</span>}
-                {label}
-              </button>
+              <option key={value} value={value} style={{ background: '#12121e' }}>{label}</option>
             ))}
+          </select>
+        </div>
+
+        {/* Text Size — controls the answer/transcript/chat reading text size,
+            independent of Zoom (which scales the whole overlay chrome). */}
+        <div className="flex items-center gap-3 py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35 flex-shrink-0 w-14">Text Size</span>
+          <div className="flex items-center gap-1 flex-1">
+            <MiniBtn onClick={() => onFontSize(Math.max(FONT_SIZE_MIN, fontSize - 1))}>A−</MiniBtn>
+            <span className="text-[11px] text-white/50 flex-1 text-center tabular-nums">{fontSize}px</span>
+            <MiniBtn onClick={() => onFontSize(Math.min(FONT_SIZE_MAX, fontSize + 1))}>A+</MiniBtn>
           </div>
         </div>
 
-        {/* Position — 2×3 grid reading like the screen */}
-        <div className="flex items-center gap-3 px-3 py-2" style={rowShadow}>
-          <span className="text-[10px] text-white/35 flex-shrink-0 w-14">Position</span>
-          <div className="grid grid-cols-3 gap-1" style={{ width: 132 }}>
-            {SNAP_POSITIONS.flat().map((pos) => (
-              <button key={pos} onClick={() => { onMove(pos); onClose() }}
-                title={pos.replace('-', ' ')}
-                className={cn('flex items-center justify-center h-6 rounded-md text-[13px] transition-colors',
-                  snapPos === pos
-                    ? 'bg-indigo-500/25 text-indigo-300 ring-1 ring-indigo-400/30'
-                    : 'text-white/45 hover:text-white hover:bg-white/10')}>
-                {SNAP_ICONS[pos]}
-              </button>
-            ))}
-          </div>
+        {/* Position — 24×24 cells, 3px gap, reading like the screen */}
+        <div className="flex items-center gap-3 py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35 flex-shrink-0 w-14">Position</span>
+          <PositionGrid snapPos={snapPos} onMove={onMove} onAfterMove={onClose} />
+        </div>
+
+        {/* Screen — move the app to a different monitor (multi-monitor only) */}
+        <div className="flex items-center gap-3 py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35 flex-shrink-0 w-14">Screen</span>
+          {displays.length <= 1 ? (
+            <span className="text-[11px] text-white/25">Single Display</span>
+          ) : (
+            <div className="flex flex-wrap gap-1 flex-1 min-w-0">
+              {displays.map((d) => (
+                <button key={d.id}
+                  onClick={() => { void window.electronAPI.window.moveToDisplay(d.id); setCurrentDisplayId(d.id); window.electronAPI.popover.hide() }}
+                  title={d.label}
+                  className={cn('px-2 py-1 rounded-lg text-[10px] font-medium transition-all truncate max-w-[110px]',
+                    d.id === currentDisplayId
+                      ? 'bg-indigo-500/25 text-indigo-300 ring-1 ring-indigo-400/30'
+                      : 'text-white/40 hover:text-white/70 hover:bg-white/8')}>
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Extra context */}
-        <div className="flex flex-col gap-1 px-3 py-2.5" style={rowShadow}>
-          <span className="text-[10px] text-white/30">Context</span>
+        <div className="flex flex-col gap-1 py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/30">Context</span>
           <input
             value={extraContext}
             onChange={(e) => onExtraContext(e.target.value)}
             placeholder="Extra context for AI (role, notes, company info…)"
-            className="px-2.5 py-1.5 rounded-lg text-[11px] outline-none"
+            className="px-2.5 py-1.5 rounded-lg text-[12px] outline-none"
             style={{
               background: 'rgba(255,255,255,0.05)',
               boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.1)',
@@ -377,11 +467,11 @@ function SettingsPanel({
         </div>
 
         {/* Exit (hide, keep running) / End Session (full teardown) */}
-        <div className="flex items-center justify-between px-3 py-2">
+        <div className="flex items-center justify-between py-1.5" style={rowDivider}>
           <button
             onClick={() => { onClose(); onExit() }}
             title="Hide the overlay to the mini logo — session keeps running (and billing) in the background"
-            className="text-[11px] text-white/55 hover:text-white transition-colors px-2 py-1 rounded-lg hover:bg-white/8 flex items-center gap-1.5"
+            className="text-[12px] text-white/55 hover:text-white transition-colors px-2 py-1 rounded-lg hover:bg-white/8 flex items-center gap-1.5"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -391,7 +481,7 @@ function SettingsPanel({
           <button
             onClick={() => { onEnd(); onClose() }}
             title="Stop everything and end the session"
-            className="text-[11px] text-red-400/70 hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10"
+            className="text-[12px] text-red-400/70 hover:text-red-400 transition-colors px-2 py-1 rounded-lg hover:bg-red-500/10"
           >
             End Session
           </button>
@@ -401,94 +491,116 @@ function SettingsPanel({
   )
 }
 
-// ─── SettingsPopover — floating overlay layer, anchored to the trigger button ─
-// Rendered as a sibling of the measured CONTAINER, so it never contributes to
-// the auto-fit height calculation and can never get clipped by it. Direction
-// (down vs. up) mirrors the window's snap position: top-anchored windows open
-// downward (room grows below), bottom-anchored/flipped windows open upward
-// (room grows above) — both directions are computed once at open time from a
-// stable snapshot of window.innerWidth/innerHeight, so a later window resize
-// (used to make room for this exact popover) never shifts the anchor.
-function SettingsPopover({ rect, flipped, onClose, onMeasuredHeight, children }: {
-  rect: DOMRect
-  flipped: boolean
-  onClose: () => void
-  onMeasuredHeight: (h: number) => void
-  children: React.ReactNode
-}) {
-  const ref = useRef<HTMLDivElement>(null)
+// ─── SettingsPopoverWindow — rendered instead of <App/> when this same
+// renderer bundle is loaded with ?view=popover (see main.tsx and main
+// process createPopoverWindow). This is a SEPARATE BrowserWindow, positioned
+// by main in real screen coordinates, so it can never be clipped by or
+// resize the main window — the entire reason this exists (see the many
+// rounds of position:fixed-portal fighting this used to replace).
+//
+// State here is a local, optimistic mirror of the main window's settings
+// (applied immediately for a responsive feel), refreshed from a fresh
+// snapshot every time the popover opens. Every change is ALSO dispatched
+// back to the main window via popover:action — several of these settings
+// have real side effects (ending the session, an API call to change the AI
+// model, reconnecting Speechmatics on language change) that only exist in
+// the main window's own hooks and cannot run in this separate renderer at all.
+interface PopoverSettings {
+  userEmail?: string
+  zoom: number; opacity: number; autoGen: boolean; autoDetect: boolean
+  privateMode: boolean; language: string
+  extraContext: string; aiModel: AIModel; snapPos: SnapPos; fontSize: number
+}
+const DEFAULT_POPOVER_SETTINGS: PopoverSettings = {
+  zoom: 1, opacity: 1, autoGen: true, autoDetect: true, privateMode: false,
+  language: 'en', extraContext: '', aiModel: 'GPT4O', snapPos: 'top-center', fontSize: FONT_SIZE_DEFAULT,
+}
+export function SettingsPopoverWindow() {
+  const [settings, setSettings] = useState<PopoverSettings>(DEFAULT_POPOVER_SETTINGS)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const onClick = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('click', onClick)
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('click', onClick); document.removeEventListener('keydown', onKey) }
-  }, [onClose])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const ro = new ResizeObserver((entries) => {
-      const h = entries[0]?.contentRect.height ?? el.getBoundingClientRect().height
-      onMeasuredHeight(Math.round(h))
-    })
-    ro.observe(el)
-    return () => { ro.disconnect(); onMeasuredHeight(0) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return window.electronAPI.on('popover:settings', (s: unknown) => setSettings(s as PopoverSettings))
   }, [])
 
-  // Snapshot anchor math once per open (keyed by `rect` identity) — see note above.
-  // Horizontal clamp: anchor to the button's right edge, but keep the whole
-  // 300px popover inside the window with an 8px gutter on both sides.
-  const anchor = useMemo(() => {
-    let right = window.innerWidth - rect.right
-    if (right < 8) right = 8                                    // never bleed off the right edge
-    if (right + POPOVER_W > window.innerWidth - 8) {
-      right = Math.max(8, window.innerWidth - 8 - POPOVER_W)    // never bleed off the left edge
-    }
-    return flipped
-      ? { right, bottom: (window.innerHeight - rect.top) + POPOVER_GAP, top: undefined as number | undefined }
-      : { right, top: rect.bottom + POPOVER_GAP, bottom: undefined as number | undefined }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rect])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') window.electronAPI.popover.hide() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Reports real rendered height to main, which resizes the window to fit
+  // it exactly (see main's positionPopoverWindow, called from both
+  // popover:show and popover:report-height) — scrollHeight (not
+  // contentRect.height/clientHeight) is what correctly reflects the TRUE
+  // natural content height even if this element's own box were ever
+  // constrained, which clientHeight/contentRect would silently truncate.
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => {
+      const h = rootRef.current?.scrollHeight ?? 0
+      if (h > 0) window.electronAPI.popover.reportHeight(h)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const patch = (p: Partial<PopoverSettings>) => setSettings((s) => ({ ...s, ...p }))
+  const send = (type: string, payload?: unknown) => window.electronAPI.popover.sendAction({ type, payload })
+  const close = () => window.electronAPI.popover.hide()
 
   return (
     <div
-      ref={ref}
-      data-overlay
-      className="anim-in"
+      ref={rootRef}
       style={{
-        position: 'fixed',
-        top: anchor.top,
-        bottom: anchor.bottom,
-        right: anchor.right,
-        zIndex: 99999,   // floats above answer panel, transcript strip, everything
-        width: POPOVER_W,
+        background: 'transparent',
         borderRadius: 12,
-        overflow: 'hidden',
+        // overflowY:auto (not overflow:hidden) — normally never kicks in,
+        // since main sizes the actual OS window to fit this content exactly
+        // (see positionPopoverWindow). It's a safety net for the one case
+        // that can't be avoided: a screen too short/cramped to fit the full
+        // menu even at the edge margins, where main clamps the window
+        // height below the content's natural size — without this, that
+        // excess would be silently invisible with no way to reach it at all.
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        scrollbarWidth: 'none',
         boxShadow: '0 8px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1)',
       }}
     >
-      {children}
+      <SettingsPanel
+        userEmail={settings.userEmail}
+        zoom={settings.zoom} opacity={settings.opacity} autoGen={settings.autoGen} autoDetect={settings.autoDetect}
+        privateMode={settings.privateMode} language={settings.language}
+        extraContext={settings.extraContext} aiModel={settings.aiModel} snapPos={settings.snapPos}
+        fontSize={settings.fontSize}
+        onZoom={(d) => {
+          patch({ zoom: Math.max(0.7, Math.min(1.5, +((settings.zoom + d).toFixed(1)))) })
+          send('zoom', d)
+        }}
+        onZoomReset={() => { patch({ zoom: 1 }); send('zoomReset') }}
+        onOpacity={(d) => {
+          patch({ opacity: Math.max(0.3, Math.min(1, +((settings.opacity + d).toFixed(1)))) })
+          send('opacity', d)
+        }}
+        onOpacityReset={() => { patch({ opacity: 1 }); send('opacityReset') }}
+        onAutoGen={(v) => { patch({ autoGen: v }); send('autoGen', v) }}
+        onAutoDetect={(v) => { patch({ autoDetect: v }); send('autoDetect', v) }}
+        onPrivate={(v) => { patch({ privateMode: v }); send('private', v) }}
+        onLanguage={(v) => { patch({ language: v }); send('language', v) }}
+        onExtraContext={(v) => { patch({ extraContext: v }); send('extraContext', v) }}
+        onModelChange={(m) => { patch({ aiModel: m }); send('model', m); close() }}
+        onFontSize={(size) => { patch({ fontSize: size }); send('SET_FONT_SIZE', size) }}
+        onMove={(p) => { patch({ snapPos: p }); send('move', p); close() }}
+        onExit={() => { send('exit'); close() }}
+        onEnd={() => { send('end'); close() }}
+        onClose={close}
+      />
     </div>
   )
 }
 
-function SliderRow({ label, value, onMinus, onPlus, onReset }: {
-  label: string; value: string
-  onMinus: () => void; onPlus: () => void; onReset: () => void
-}) {
-  return (
-    <div className="flex items-center gap-2 px-3 py-1.5">
-      <span className="text-[12px] text-white/55 flex-1">{label}</span>
-      <MiniBtn onClick={onMinus}>−</MiniBtn>
-      <span className="text-[10px] text-white/35 w-9 text-center tabular-nums">{value}</span>
-      <MiniBtn onClick={onPlus}>+</MiniBtn>
-      <MiniBtn onClick={onReset}>↺</MiniBtn>
-    </div>
-  )
-}
 function MiniBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick}
@@ -497,28 +609,46 @@ function MiniBtn({ onClick, children }: { onClick: () => void; children: React.R
     </button>
   )
 }
-function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+// Track/knob geometry driven entirely by inline pixel math (not Tailwind
+// translate utilities) so the knob's position is a direct, unambiguous
+// function of `checked` — nothing to purge, merge, or misconfigure.
+const TOGGLE_W = 36, TOGGLE_H = 20, TOGGLE_KNOB = 14, TOGGLE_INSET = 4
+function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+  const knobLeft = checked ? TOGGLE_W - TOGGLE_KNOB - TOGGLE_INSET : TOGGLE_INSET
   return (
-    <button onClick={onToggle}
-      className={cn('relative h-4 w-7 rounded-full transition-colors duration-200', on ? 'bg-green-500' : 'bg-white/15')}>
-      <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200',
-        on ? 'translate-x-3.5' : 'translate-x-0.5')} />
+    <button
+      type="button"
+      onClick={onChange}
+      aria-pressed={checked}
+      style={{
+        position: 'relative',
+        width: TOGGLE_W,
+        height: TOGGLE_H,
+        borderRadius: TOGGLE_H,
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+        flexShrink: 0,
+        background: checked ? '#22c55e' : '#444444',
+        transition: 'background-color 0.2s ease',
+      }}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: (TOGGLE_H - TOGGLE_KNOB) / 2,
+          left: knobLeft,
+          width: TOGGLE_KNOB,
+          height: TOGGLE_KNOB,
+          borderRadius: '50%',
+          background: '#ffffff',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+          transition: 'left 0.2s ease',
+        }}
+      />
     </button>
   )
 }
-function SMenuBtn({ label, onClick, children, danger = false }: {
-  label: string; onClick: () => void; children?: React.ReactNode; danger?: boolean
-}) {
-  return (
-    <button onClick={onClick}
-      className={cn('w-full flex items-center justify-between px-3 py-1.5 text-[12px] transition-colors',
-        danger ? 'text-red-400 hover:bg-red-500/10' : 'text-white/60 hover:text-white hover:bg-white/6')}>
-      <span>{label}</span>
-      {children}
-    </button>
-  )
-}
-
 // ─── Move dropdown — 2×3 grid of snap positions ───────────────────────────────
 const SNAP_POSITIONS = [
   ['top-left', 'top-center', 'top-right'],
@@ -529,6 +659,44 @@ type SnapPos = (typeof SNAP_POSITIONS)[number][number]
 const SNAP_ICONS: Record<string, string> = {
   'top-left': '↖', 'top-center': '↑', 'top-right': '↗',
   'bottom-left': '↙', 'bottom-center': '↓', 'bottom-right': '↘',
+}
+
+/** Shared 3×3 snap-position grid — used both in the hamburger menu (24×24,
+ * `compact=false`) and directly in the toolbar (14×14, `compact=true`) so a
+ * position change is one click away without opening the menu at all. */
+function PositionGrid({ snapPos, onMove, size = 24, gap = 3, compact = false, onAfterMove, flashPos }: {
+  snapPos: SnapPos; onMove: (p: SnapPos) => void
+  size?: number; gap?: number; compact?: boolean; onAfterMove?: () => void
+  flashPos?: SnapPos | null
+}) {
+  return (
+    <div className="grid grid-cols-3" style={{ width: size * 3 + gap * 2, gap }}>
+      {SNAP_POSITIONS.flat().map((pos) => {
+        const isActive = snapPos === pos
+        const isFlashing = flashPos === pos
+        return (
+          <button
+            key={pos}
+            onClick={() => { onMove(pos); onAfterMove?.() }}
+            title={pos.replace('-', ' ')}
+            className={cn(
+              'flex items-center justify-center rounded-md transition-all',
+              isFlashing
+                ? 'bg-indigo-400/40 text-white ring-1 ring-indigo-300/50'
+                : isActive
+                  ? 'bg-indigo-500/25 text-indigo-300 ring-1 ring-indigo-400/30'
+                  : compact
+                    ? 'bg-white/5 text-white/40 hover:text-white/80 hover:opacity-80'
+                    : 'text-white/45 hover:text-white hover:bg-white/10',
+            )}
+            style={{ width: size, height: size, fontSize: Math.max(8, Math.round(size * 0.5)) }}
+          >
+            {SNAP_ICONS[pos]}
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 
@@ -594,9 +762,10 @@ function ActivationModal({
         <div className="flex-1" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
         <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button onClick={onHide}
-            className="text-[10px] text-white/35 hover:text-white/70 px-2 h-5 rounded-md transition-colors"
+            title="Collapse"
+            className="flex items-center justify-center h-6 w-6 rounded-md hover:bg-white/8 transition-all opacity-85 hover:opacity-100"
             style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.08)' }}>
-            Hide
+            <ChevronUp />
           </button>
           <button onClick={onBack}
             className="flex items-center justify-center h-6 w-6 rounded-md text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-all">
@@ -775,15 +944,31 @@ export function SessionOverlay({
   const [screenshots,  setScreenshots]  = useState<string[]>([])
   const [manualQ,      setManualQ]      = useState('')
   const [showSettings, setShowSettings] = useState(false)
-  const [settingsRect, setSettingsRect] = useState<DOMRect | null>(null)
-  const [popoverH,     setPopoverH]     = useState(0)
   const [maxContentH,  setMaxContentH]  = useState(700)  // 70% of work-area height, fetched on mount
   const [extraContext, setExtraContext] = useState('')
   const [aiModel,      setAiModel]      = useState<AIModel>(session.aiModel)
   const [snapPos,      setSnapPos]      = useState<SnapPos>(() => {
     return (localStorage.getItem('overlay-snap-pos') as SnapPos | null) ?? 'top-center'
   })
+  const [flashPos,     setFlashPos]     = useState<SnapPos | null>(null)
+  const [fontSize,     setFontSize]     = useState<number>(() => {
+    const saved = Number(localStorage.getItem('answerFontSize'))
+    return saved >= FONT_SIZE_MIN && saved <= FONT_SIZE_MAX ? saved : FONT_SIZE_DEFAULT
+  })
+  useEffect(() => { localStorage.setItem('answerFontSize', fontSize.toString()) }, [fontSize])
   const flipped = snapPos.startsWith('bottom')
+
+  // Global snap-position shortcuts (main process) move the window directly —
+  // this just flashes the matching button in the toolbar's mini grid so the
+  // shortcut has the same visible acknowledgment a click would.
+  useEffect(() => {
+    return window.electronAPI.on('window:snap-feedback', (pos: unknown) => {
+      setSnapPos(pos as SnapPos)
+      localStorage.setItem('overlay-snap-pos', pos as SnapPos)
+      setFlashPos(pos as SnapPos)
+      setTimeout(() => setFlashPos(null), 200)
+    })
+  }, [])
 
   // Restore the persisted snap position on launch AND when returning from
   // Exit/mini mode (the mini bar moves/resizes the window while we're hidden).
@@ -797,10 +982,15 @@ export function SessionOverlay({
   const hiddenRef = useRef(hidden)
   useEffect(() => {
     hiddenRef.current = hidden
-    if (hidden) { setShowSettings(false); setPopoverH(0) }  // popover can't outlive the visible overlay
+    // The popover window can't outlive the visible overlay — if the user
+    // exits to the mini-bar pill while it's open, close it too.
+    if (hidden) {
+      showSettingsRef.current = false
+      setShowSettings(false)
+      window.electronAPI.popover.hide()
+    }
   }, [hidden])
 
-  const [audioLevel,   setAudioLevel]   = useState(0)  // 0–1 RMS from AudioWorklet
   const [copied,       setCopied]       = useState<string | null>(null)  // id of copied answer
 
   const isRunningRef   = useRef(false)
@@ -812,9 +1002,24 @@ export function SessionOverlay({
   const inputRef       = useRef<HTMLInputElement>(null)
   const pendingQRef    = useRef('')
   const prevHeightRef  = useRef(TOOLBAR_H)
-  const answerScrollRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
   const contentHeightRef = useRef(TOOLBAR_H)
+  // Mirrors `showSettings` in a ref so the memoized onSettingsClick callback
+  // (stable across renders, so it doesn't break ToolbarBar's React.memo) can
+  // read the current open/closed state synchronously without needing
+  // `showSettings` in its own dependency array.
+  const showSettingsRef = useRef(false)
+  // Settings snapshot kept in a ref for the same reason — onSettingsClick
+  // reads this to send the popover window its current values on open,
+  // without needing every settings field in its dependency array either.
+  const settingsSnapshotRef = useRef({
+    userEmail, zoom, opacity, autoGen, autoDetect, privateMode, language, extraContext, aiModel, snapPos, fontSize,
+  })
+  useEffect(() => {
+    settingsSnapshotRef.current = {
+      userEmail, zoom, opacity, autoGen, autoDetect, privateMode, language, extraContext, aiModel, snapPos, fontSize,
+    }
+  }, [userEmail, zoom, opacity, autoGen, autoDetect, privateMode, language, extraContext, aiModel, snapPos, fontSize])
 
   useEffect(() => { partialRef.current = partial }, [partial])
 
@@ -855,7 +1060,6 @@ export function SessionOverlay({
   const audio = useSystemAudio({
     onPCMChunk: sm.sendAudio,
     onError: (m) => setError(m),
-    onLevel: setAudioLevel,
   })
 
   const ai = useAIStream({
@@ -1070,22 +1274,37 @@ export function SessionOverlay({
   const onToggleMic      = useCallback(() => setMicOn((v) => !v), [])
   const onToggleSys      = useCallback(() => setSysOn((v) => !v), [])
   const onToggleChat     = useCallback(() => setShowChat((v) => !v), [])
+  // Settings now live in a separate BrowserWindow (see SettingsPopoverWindow
+  // + main process popover:* IPC) — this just opens/closes that window
+  // instead of toggling in-window portal state. Positioned in real screen
+  // coordinates by main, so it can never resize or get clipped by this window.
   const onSettingsClick   = useCallback((r: DOMRect) => {
-    setSettingsRect(r)
-    setShowSettings((v) => !v)
-  }, [])
-  const onCloseSettings   = useCallback(() => { setShowSettings(false); setPopoverH(0) }, [])
+    const opening = !showSettingsRef.current
+    showSettingsRef.current = opening
+    setShowSettings(opening)
+    if (opening) {
+      window.electronAPI.popover.updateSettings(settingsSnapshotRef.current)
+      window.electronAPI.popover.show({
+        x: r.left, y: r.top, width: r.width, height: r.height, flipped,
+      }).catch((err) => {
+        console.error('[hamburger] popover show failed:', err)
+      })
+    } else {
+      window.electronAPI.popover.hide()
+    }
+  }, [flipped])
   const onHideMini       = useCallback(() => onHide(prevHeightRef.current), [onHide])
   const onSnapMove       = useCallback((pos: SnapPos) => {
     setSnapPos(pos)
     localStorage.setItem('overlay-snap-pos', pos)
     void window.electronAPI.window.moveTo(pos)
+    window.electronAPI.popover.hide()
   }, [])
   const onNavigatePrev   = useCallback(() => setCurrentQA((i) => Math.max(0, i - 1)), [])
   const onNavigateNext   = useCallback((len: number) => setCurrentQA((i) => Math.min(len - 1, i + 1)), [])
   const onClearAnswers   = useCallback(() => { setQaPairs([]); setCurrentQA(-1); setStreaming(''); setShowAnswer(false); ai.abort() }, [ai])
   const onCloseAnswer    = useCallback(() => setShowAnswer(false), [])
-  const onRegenerate     = useCallback((q: string) => { pendingQRef.current = q; ai.ask(q) }, [ai])
+  const onRegenerate     = useCallback((q: string) => { pendingQRef.current = q; ai.ask(q, undefined, true) }, [ai])
   const onDismissError   = useCallback(() => setError(null), [])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
@@ -1097,6 +1316,36 @@ export function SessionOverlay({
     return () => { u1(); u2(); u3(); u4() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerAnswer, captureScreenshot, clearTranscript])
+
+  // ── Settings popover window: closed itself (blur/Escape) or dispatched an
+  // action (toggle/slider/dropdown/position/exit/end changed in that window) ──
+  useEffect(() => {
+    const uClosed = window.electronAPI.on('popover:closed', () => {
+      showSettingsRef.current = false
+      setShowSettings(false)
+    })
+    const uAction = window.electronAPI.on('popover:action', (action: unknown) => {
+      const { type, payload } = action as { type: string; payload?: unknown }
+      switch (type) {
+        case 'zoom': setZoom((z) => Math.max(0.7, Math.min(1.5, +((z + (payload as number)).toFixed(1))))); break
+        case 'zoomReset': setZoom(1); break
+        case 'opacity': setOpacity((o) => Math.max(0.3, Math.min(1, +((o + (payload as number)).toFixed(1))))); break
+        case 'opacityReset': setOpacity(1); break
+        case 'autoGen': setAutoGen(payload as boolean); break
+        case 'autoDetect': setAutoDetect(payload as boolean); break
+        case 'private': onPrivateChange(payload as boolean); break
+        case 'language': onLanguageChange(payload as string); break
+        case 'extraContext': setExtraContext(payload as string); break
+        case 'model': onModelChange(payload as AIModel); break
+        case 'SET_FONT_SIZE': setFontSize(payload as number); break
+        case 'move': onSnapMove(payload as SnapPos); break
+        case 'exit': onHideMini(); break
+        case 'end': void endSession(); break
+      }
+    })
+    return () => { uClosed(); uAction() }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onPrivateChange, onLanguageChange, onModelChange, onSnapMove, onHideMini, endSession])
 
   // ── Batch save transcript ──────────────────────────────────────────────────
   useEffect(() => {
@@ -1138,33 +1387,26 @@ export function SessionOverlay({
     const el = overlayRootRef.current
     if (!el) return
 
+    // The settings popover now lives in its own BrowserWindow (see
+    // SettingsPopoverWindow / main process popover:* IPC), so this no longer
+    // needs to know or care whether it's open — the main window always just
+    // fits its own content, exactly like before the popover ever existed.
     const applyHeight = () => {
       const contentH = Math.min(el.scrollHeight, maxContentH)
       contentHeightRef.current = contentH
       prevHeightRef.current = contentH
-      if (showSettings && popoverH > 0) {
-        // maxContentH is already 70% of the work area — while the popover is open,
-        // temporarily allow up to MAX_TOTAL_HEIGHT_RATIO (90%) of the full work area
-        // so the popover is never clipped, then shrink back once it closes.
-        const workAreaH = maxContentH / 0.7
-        const total = Math.min(contentH + popoverH + POPOVER_GAP * 2, Math.round(workAreaH * MAX_TOTAL_HEIGHT_RATIO))
-        window.electronAPI.window.setHeight(total, flipped)
-      } else {
-        window.electronAPI.window.setHeight(contentH, flipped)
-      }
+      window.electronAPI.window.setHeight(contentH, flipped)
     }
 
     const ro = new ResizeObserver(applyHeight)
     ro.observe(el)
     applyHeight()
     return () => ro.disconnect()
-  }, [isActivated, hidden, flipped, showSettings, popoverH, maxContentH])
+  }, [isActivated, hidden, flipped, maxContentH])
 
   // ── Zoom / opacity ─────────────────────────────────────────────────────────
   useEffect(() => { document.documentElement.style.fontSize = `${zoom * 16}px` }, [zoom])
   useEffect(() => { window.electronAPI.window.setOpacity(opacity) }, [opacity])
-
-  const currentPair = currentQA >= 0 ? qaPairs[currentQA] : null
 
   // ── Shared modal card style ───────────────────────────────────────────────
   const modalCardStyle: React.CSSProperties = {
@@ -1190,6 +1432,12 @@ export function SessionOverlay({
         <div className="flex items-center gap-2 px-4 h-10" style={modalHeaderStyle}>
           <OverlayLogo />
           <div className="flex-1" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+          <button onClick={() => onHide(MODAL_H)}
+            title="Collapse"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            className="flex items-center justify-center h-6 w-6 rounded-md hover:bg-white/8 transition-all flex-shrink-0 opacity-85 hover:opacity-100">
+            <ChevronUp />
+          </button>
         </div>
         <div className="px-5 py-5 text-center space-y-3">
           <div
@@ -1242,6 +1490,12 @@ export function SessionOverlay({
         <div className="flex items-center gap-2 px-4 h-10" style={modalHeaderStyle}>
           <OverlayLogo />
           <div className="flex-1" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
+          <button onClick={() => onHide(MODAL_H)}
+            title="Collapse"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            className="flex items-center justify-center h-6 w-6 rounded-md hover:bg-white/8 transition-all flex-shrink-0 opacity-85 hover:opacity-100">
+            <ChevronUp />
+          </button>
         </div>
         <div className="px-5 py-5 text-center space-y-3">
           <div
@@ -1296,23 +1550,33 @@ export function SessionOverlay({
   }
 
   // ── Active overlay ────────────────────────────────────────────────────────
-  const isMicActive = isRunning && micOn
-  const isSysActive = isRunning && sysOn
-  const panelOpen   = showSettings || showChat || showAnswer
-
   const PANEL_BG: React.CSSProperties = {
     background: 'rgba(8,8,12,0.94)',
     backdropFilter: 'none',
   }
-  const toolbarStyle: React.CSSProperties = {
-    ...PANEL_BG,
-    boxShadow: 'none',
-  }
 
   // Unified rounded container — clips all panels so no individual border-radius needed.
   // maxHeight lets the AnswerPanel's flex child shrink-and-scroll instead of the
-  // window growing past the 70% work-area cap (Task 1); Task 2's popover renders
-  // OUTSIDE this container entirely so it never contributes to this layout.
+  // window growing past the 70% work-area cap. The settings popover lives in
+  // its own BrowserWindow entirely (see SettingsPopoverWindow / main process
+  // popover:* IPC) and never touches this container's layout at all.
+  //
+  // Bottom positions: toolbar visually at the BOTTOM (column-reverse), pinned
+  // to the window's bottom edge via position:fixed so it never shifts on
+  // screen whenever the window grows for any OTHER reason (chat panel
+  // opening, an answer appearing, transcript growing) — the window's bottom
+  // edge itself is held constant by anchorBottom in main, so pinning here
+  // means the toolbar truly cannot move.
+  //
+  // A first attempt at this pinning broke the whole app: this element used to
+  // be nested inside a wrapper carrying the `.anim-in` fade/slide class, which
+  // animates `transform` — and any ANCESTOR with a non-`none` transform
+  // becomes the containing block for `position: fixed` descendants (CSS
+  // spec). So "fixed" was resolving against that animated wrapper's
+  // (near-zero-size) box instead of the real window. Fix: `.anim-in` now
+  // lives directly on THIS element instead of an ancestor — a transform on
+  // the fixed element itself doesn't affect what it's positioned relative to
+  // (transforms apply after position is resolved), so it's safe here.
   const CONTAINER: React.CSSProperties = {
     borderRadius: 14,
     overflow: 'hidden',
@@ -1320,42 +1584,20 @@ export function SessionOverlay({
     display: 'flex',
     flexDirection: flipped ? 'column-reverse' : 'column',
     maxHeight: maxContentH,
+    ...(flipped ? { position: 'fixed', bottom: 0, left: 0, right: 0 } as React.CSSProperties : {}),
   }
 
   return (
-    <div className="anim-in" style={{ background: 'transparent' }}>
+    <div style={{ background: 'transparent' }}>
 
-      {/* Floating "…" popover — overlay layer, not part of the measured column flow */}
-      {showSettings && settingsRect && (
-        <SettingsPopover rect={settingsRect} flipped={flipped} onClose={onCloseSettings} onMeasuredHeight={setPopoverH}>
-          <SettingsPanel
-            userEmail={userEmail}
-            zoom={zoom} opacity={opacity} autoGen={autoGen} autoDetect={autoDetect}
-            privateMode={privateMode} language={language}
-            extraContext={extraContext} aiModel={aiModel} snapPos={snapPos}
-            onZoom={(d) => setZoom((z) => Math.max(0.7, Math.min(1.5, +((z + d).toFixed(1)))))}
-            onZoomReset={() => setZoom(1)}
-            onOpacity={(d) => setOpacity((o) => Math.max(0.3, Math.min(1, +((o + d).toFixed(1)))))}
-            onOpacityReset={() => setOpacity(1)}
-            onAutoGen={setAutoGen} onAutoDetect={setAutoDetect}
-            onPrivate={onPrivateChange} onLanguage={onLanguageChange}
-            onExtraContext={setExtraContext}
-            onModelChange={onModelChange} onMove={onSnapMove}
-            onExit={onHideMini} onEnd={endSession} onClose={onCloseSettings}
-          />
-        </SettingsPopover>
-      )}
-
-      <div data-overlay ref={overlayRootRef} style={CONTAINER}>
+      <div data-overlay ref={overlayRootRef} className="anim-in" style={CONTAINER}>
 
       {/* ══ TOOLBAR ══════════════════════════════════════════════════════════ */}
       <ToolbarBar
         companyName={session.companyName}
-        sessionMode={session.mode}
         isRunning={isRunning}
         micOn={micOn}
         sysOn={sysOn}
-        audioLevel={audioLevel}
         smState={smState}
         showChat={showChat}
         showAnswer={showAnswer}
@@ -1374,10 +1616,13 @@ export function SessionOverlay({
         onSettingsClick={onSettingsClick}
         onHide={onHideMini}
         aiModel={aiModel}
+        snapPos={snapPos}
+        onSnapMove={onSnapMove}
+        flashPos={flashPos}
       />
 
       {/* ══ TRANSCRIPT STRIP — always visible: the queued "next question" tunnel ══ */}
-      <CaptionPanel transcript={transcript} partial={partial} height={CAPTION_H} onClear={clearTranscript} />
+      <CaptionPanel transcript={transcript} partial={partial} height={CAPTION_H} onClear={clearTranscript} fontSize={fontSize} />
 
       {/* ══ CHAT PANEL ══════════════════════════════════════════════════════ */}
       {showChat && (
@@ -1422,13 +1667,14 @@ export function SessionOverlay({
               }}
               placeholder="Enter a message..."
               disabled={!isRunning}
-              className="flex-1 rounded-xl px-3 py-1.5 text-[12px] outline-none transition-all disabled:opacity-40"
+              className="flex-1 rounded-xl px-3 py-1.5 outline-none transition-all disabled:opacity-40"
               style={{
                 background: 'rgba(255,255,255,0.06)',
                 boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.1)',
                 color: '#ffffff',
                 WebkitTextFillColor: '#ffffff',
                 caretColor: '#4ade80',
+                fontSize,
               }}
               onFocus={(e) => (e.currentTarget.style.boxShadow = 'inset 0 0 0 1px rgba(34,197,94,0.4)')}
               onBlur={(e) => (e.currentTarget.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,0.1)')}
@@ -1482,6 +1728,7 @@ export function SessionOverlay({
           onCopy={copyAnswer}
           onRegenerate={onRegenerate}
           onDismissError={onDismissError}
+          fontSize={fontSize}
         />
       )}
 
@@ -1547,8 +1794,9 @@ interface CaptionPanelProps {
   partial: string
   height: number
   onClear: () => void
+  fontSize: number
 }
-const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, height, onClear }: CaptionPanelProps) {
+const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, height, onClear, fontSize }: CaptionPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth
@@ -1588,15 +1836,15 @@ const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, hei
               {queued.map((t) => (
                 <span
                   key={t.id}
-                  className="flex-shrink-0 max-w-[340px] truncate px-2.5 py-0.5 rounded-full text-[12px] leading-snug text-white"
-                  style={{ background: 'rgba(255,255,255,0.10)' }}
+                  className="flex-shrink-0 max-w-[340px] truncate px-2.5 py-0.5 rounded-full leading-snug text-white"
+                  style={{ background: 'rgba(255,255,255,0.10)', fontSize }}
                   title={t.text}
                 >
                   {t.text}
                 </span>
               ))}
               {partial && (
-                <span className="flex-shrink-0 max-w-[340px] truncate px-1.5 text-[12px] leading-snug text-white/45 italic">
+                <span className="flex-shrink-0 max-w-[340px] truncate px-1.5 leading-snug text-white/45 italic" style={{ fontSize }}>
                   {partial}
                 </span>
               )}
@@ -1608,6 +1856,7 @@ const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, hei
           onClick={onClear}
           className="overlay-btn h-6 px-2 text-[10px] gap-1 flex-shrink-0"
           title="Clear the queued transcript"
+          style={{ background: 'rgba(0,0,0,0.6)', color: '#ffffff', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.12)' }}
         >
           Clear <Kbd s="⌘⇧⌫" />
         </button>
@@ -1615,6 +1864,24 @@ const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, hei
     </div>
   )
 })
+
+// Renders streaming text so only the newest chunk (since the last render)
+// gets a fresh DOM node — CSS handles the fade-in purely from that node
+// mounting fresh, with no change to how/when tokens actually arrive.
+function StreamingText({ text }: { text: string }) {
+  const prevRef = useRef('')
+  const prevText = prevRef.current
+  const isGrowth = text.startsWith(prevText)
+  const stable = isGrowth ? prevText : ''
+  const fresh = isGrowth ? text.slice(prevText.length) : text
+  useEffect(() => { prevRef.current = text }, [text])
+  return (
+    <>
+      {stable}
+      {fresh && <span key={text.length} className="answer-fade-in">{fresh}</span>}
+    </>
+  )
+}
 
 // ─── AnswerPanel — memo'd so only streaming tokens cause re-renders here ───────
 interface AnswerPanelProps {
@@ -1632,16 +1899,33 @@ interface AnswerPanelProps {
   onCopy: (text: string, id?: string) => void
   onRegenerate: (q: string) => void
   onDismissError: () => void
+  fontSize: number
 }
 const AnswerPanel = React.memo(function AnswerPanel({
   isStreaming, streaming, qaPairs, currentQA, pendingQuestion,
   error, copied,
-  onNavigatePrev, onNavigateNext, onClear, onClose, onCopy, onRegenerate, onDismissError,
+  onNavigatePrev, onNavigateNext, onClear, onClose, onCopy, onRegenerate, onDismissError, fontSize,
 }: AnswerPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Smart auto-scroll: only follow new streaming tokens while the user is at
+  // (or very near) the bottom. Any manual scroll-up latches "not at bottom"
+  // until the user scrolls back down themselves — never yank them back.
+  const atBottomRef = useRef(true)
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50
+  }, [])
   useEffect(() => {
-    if (streaming && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    const el = scrollRef.current
+    if (streaming && el && atBottomRef.current) el.scrollTop = el.scrollHeight
   }, [streaming])
+  // No scroll effect on `currentQA` — that fired on every generation-complete
+  // (onDone advances currentQA to the new pair) as well as manual prev/next
+  // navigation, snapping the view to the bottom right after the user had
+  // control during streaming. Scroll position is left entirely to the user
+  // once generation is done; the only automatic scrolling left is the
+  // smart-scroll-while-streaming above.
 
   const currentPair = currentQA >= 0 ? qaPairs[currentQA] : null
   const PANEL_BG: React.CSSProperties = { background: 'rgba(8,8,12,0.94)', backdropFilter: 'none' }
@@ -1706,7 +1990,7 @@ const AnswerPanel = React.memo(function AnswerPanel({
       </div>
 
       {/* Q&A content */}
-      <div ref={scrollRef} className="px-3 pt-2.5 pb-4 overflow-y-auto space-y-3 flex-1"
+      <div ref={scrollRef} onScroll={handleScroll} className="px-3 pt-2.5 pb-4 overflow-y-auto space-y-3 flex-1"
            style={{ minHeight: 0, scrollbarWidth: 'none' }}>
         {(isStreaming || streaming) ? (
           <>
@@ -1718,10 +2002,13 @@ const AnswerPanel = React.memo(function AnswerPanel({
             )}
             <div className="flex gap-2">
               <span className="text-[14px] leading-none mt-0.5 flex-shrink-0">⭐</span>
-              <p className="text-[13.5px] text-white/82 leading-relaxed whitespace-pre-wrap flex-1 min-w-0">
-                {streaming}
+              <p
+                className="text-white/82 whitespace-pre-wrap flex-1 min-w-0 answer-text"
+                style={{ fontSize, lineHeight: 1.65, letterSpacing: '0.01em', WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' } as React.CSSProperties}
+              >
+                <StreamingText text={streaming} />
                 {isStreaming && !streaming && <span className="text-white/35 text-[11px]">Thinking…</span>}
-                {isStreaming && <span className="inline-block h-3.5 w-0.5 bg-green-400 cursor-blink ml-0.5 align-middle rounded-full" />}
+                {isStreaming && <span className="answer-cursor" />}
               </p>
             </div>
           </>
@@ -1733,7 +2020,7 @@ const AnswerPanel = React.memo(function AnswerPanel({
             </div>
             <div className="flex gap-2">
               <span className="text-[14px] leading-none mt-0.5 flex-shrink-0">⭐</span>
-              <div className="flex-1 min-w-0"><AnswerText content={currentPair.answer} /></div>
+              <div className="flex-1 min-w-0"><AnswerText content={currentPair.answer} fontSize={fontSize} /></div>
             </div>
             <div className="flex items-center justify-between pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
               <span className="text-[9.5px] text-white/20 font-mono">
@@ -1760,8 +2047,8 @@ const AnswerPanel = React.memo(function AnswerPanel({
 
 // ─── ToolbarBar — memo'd so streaming/transcript/timer don't re-render it ──────
 interface ToolbarBarProps {
-  companyName: string; sessionMode: string
-  isRunning: boolean; micOn: boolean; sysOn: boolean; audioLevel: number
+  companyName: string
+  isRunning: boolean; micOn: boolean; sysOn: boolean
   smState: SmConnectionState
   showChat: boolean; showAnswer: boolean; showSettings: boolean
   qaPairsCount: number
@@ -1772,6 +2059,7 @@ interface ToolbarBarProps {
   onToggleChat: () => void; onSettingsClick: (r: DOMRect) => void
   onHide: () => void
   aiModel: AIModel
+  snapPos: SnapPos; onSnapMove: (p: SnapPos) => void; flashPos?: SnapPos | null
 }
 const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
   const isMicActive = p.isRunning && p.micOn
@@ -1780,22 +2068,20 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
 
   return (
     <>
+      {/* Single row, never wraps — flex-nowrap (the default) with min-width:0
+          on the truncating group below so long company names/model labels
+          ellipsis instead of forcing the row to grow or wrap. minHeight (not
+          a fixed height) leaves room for the auto-fit system to pick up any
+          small overflow without us having to hand-tune a pixel height. */}
       <div
-        className="flex items-center gap-1.5 px-2.5 select-none"
-        style={{ ...PANEL_BG, borderRadius: 0, height: TOOLBAR_H, flexShrink: 0 }}
+        className="flex flex-nowrap items-center gap-1 px-2.5 py-1 select-none overflow-hidden"
+        style={{ ...PANEL_BG, borderRadius: 0, minHeight: TOOLBAR_H, flexShrink: 0 }}
       >
         {/* Logo + company name + session badge + model */}
-        <div className="flex items-center gap-1.5 flex-shrink-0 min-w-0">
-          <div className="h-5 w-5 rounded-lg flex items-center justify-center flex-shrink-0"
-               style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 2px 6px rgba(99,102,241,0.35)' }}>
-            <span className="text-white font-black text-[8.5px] tracking-tight">IA</span>
-          </div>
-          <span className="text-white/50 text-[10px] font-medium truncate max-w-[100px]" title={p.companyName}>{p.companyName}</span>
-          <span className={cn('text-[8px] font-semibold px-1 py-0.5 rounded-full flex-shrink-0',
-            p.sessionMode === 'FREE' ? 'text-indigo-300/60 bg-indigo-500/10' : 'text-violet-300/60 bg-violet-500/10')}>
-            {p.sessionMode}
-          </span>
-          <span className="text-[8px] font-medium px-1 py-0.5 rounded-full flex-shrink-0 text-white/35 bg-white/6"
+        <div className="flex items-center gap-1.5 flex-shrink min-w-0">
+          <LogoWaveform active={p.isRunning && (p.sysOn || p.micOn)} />
+          <span className="text-white/50 text-[10px] font-medium truncate max-w-[80px]" title={p.companyName}>{p.companyName}</span>
+          <span className="text-[8px] font-medium px-1 py-0.5 rounded-full flex-shrink-0 truncate max-w-[70px] text-white/35 bg-white/6"
                 title={`Active AI model: ${AI_MODEL_LABELS[p.aiModel] ?? p.aiModel}`}>
             {AI_MODEL_LABELS[p.aiModel] ?? p.aiModel}
           </span>
@@ -1803,11 +2089,6 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
         <Sep />
         {/* Audio indicators */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {/* Audio-level indicator — display only, not a control */}
-          <div title="Audio level" style={{ padding: '3px 4px' }}
-               className="flex items-center justify-center rounded-lg">
-            <WaveBars active={p.isRunning} level={p.audioLevel} />
-          </div>
           <button onClick={p.onToggleSys}
                   title={p.sysOn ? 'System audio enabled — click to disable' : 'System audio disabled — click to enable'}
                   className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
@@ -1818,7 +2099,6 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             </svg>
             {p.sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
           </button>
-          <span className="text-[9px] text-white/40 font-medium">System</span>
           <Sep />
           <button onClick={p.onToggleMic}
                   title={p.micOn ? 'Microphone enabled — click to disable' : 'Microphone disabled — click to enable'}
@@ -1830,7 +2110,6 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             </svg>
             {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
           </button>
-          <span className="text-[9px] text-white/40 font-medium">Mic</span>
         </div>
         <Sep />
         <AnswerBtn onClick={p.onAnswer} disabled={!p.isRunning} streaming={p.isStreaming} />
@@ -1854,6 +2133,11 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
         </TBtn>
         <div className="flex-1" />
         <SessionTimer key={p.timerKey} startSeconds={p.timerStartSeconds} onExpire={p.onTimerExpire} mode={p.sessionTimerMode} timerKey={p.timerKey} />
+        {/* Mini position grid — one click to snap, no need to open the menu.
+            Kept in the hamburger menu too (see SettingsPanel) rather than
+            removed from there, since this compact copy is an addition to an
+            already-tight single-row toolbar, not guaranteed headroom. */}
+        <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={14} gap={2} compact flashPos={p.flashPos} />
         {/* Status pill */}
         {(() => {
           let label: string; let bg: string; let color: string; let ring: string; let dotColor: string
@@ -1869,8 +2153,8 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             label = 'Ready'; bg = 'rgba(255,255,255,0.07)'; color = 'rgba(255,255,255,0.45)'; ring = 'rgba(255,255,255,0.12)'; dotColor = 'rgba(255,255,255,0.3)'
           }
           return (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-semibold flex-shrink-0"
-                 style={{ background: bg, color, boxShadow: `inset 0 0 0 1px ${ring}`, minWidth: 76 }}>
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[11px] font-semibold flex-shrink-0 whitespace-nowrap"
+                 style={{ background: bg, color, boxShadow: `inset 0 0 0 1px ${ring}` }}>
               <span className="h-1.5 w-1.5 rounded-full flex-shrink-0"
                     style={{ background: dotColor, animation: (p.isRunning && p.smState === 'connected') || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
               {label}
@@ -1884,11 +2168,10 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4zM10 12a2 2 0 100 4 2 2 0 000-4z" />
           </svg>
         </IBtn>
-        <IBtn title="Hide to logo" onClick={p.onHide}>
-          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-          </svg>
+        <IBtn title="Collapse (⌘H)" onClick={p.onHide} className="opacity-85 hover:opacity-100">
+          <ChevronUp />
         </IBtn>
+        <Kbd s="⌘H" />
       </div>
     </>
   )
@@ -1918,7 +2201,7 @@ function InlineText({ text }: { text: string }) {
 }
 
 // ─── Block-level markdown parser (headings, lists, MCQ options, paragraphs) ──
-function TextBlocks({ text }: { text: string }) {
+function TextBlocks({ text, fontSize }: { text: string; fontSize: number }) {
   const blocks: React.ReactNode[] = []
   const lines = text.split('\n')
   let listItems: string[] = []
@@ -1936,11 +2219,11 @@ function TextBlocks({ text }: { text: string }) {
             const clean = item.replace(/^\*\*|\*\*$/g, '')
             return (
               <div key={j} className={cn(
-                'flex gap-2.5 px-3 py-2 rounded-xl text-[13px] leading-snug transition-colors',
+                'flex gap-2.5 px-3 py-2 rounded-xl leading-snug transition-colors',
                 isCorrect
                   ? 'bg-green-500/12 ring-1 ring-green-400/25 text-white'
                   : 'bg-white/4 text-white/70',
-              )}>
+              )} style={{ fontSize, lineHeight: 1.65, letterSpacing: '0.01em' }}>
                 <span className={cn(
                   'flex-shrink-0 h-5 w-5 rounded-lg text-[11px] font-bold flex items-center justify-center',
                   isCorrect ? 'bg-green-500/30 text-green-300' : 'bg-white/8 text-white/40',
@@ -1956,7 +2239,7 @@ function TextBlocks({ text }: { text: string }) {
       blocks.push(
         <ul key={key++} className="space-y-1 my-1.5">
           {listItems.map((item, j) => (
-            <li key={j} className="flex gap-2 text-[13px] text-white/82 leading-relaxed">
+            <li key={j} className="flex gap-2 text-white/82" style={{ fontSize, lineHeight: 1.65, letterSpacing: '0.01em' }}>
               <span className="text-indigo-400 flex-shrink-0 mt-0.5 text-[10px]">◆</span>
               <span><InlineText text={item} /></span>
             </li>
@@ -1967,7 +2250,7 @@ function TextBlocks({ text }: { text: string }) {
       blocks.push(
         <ol key={key++} className="space-y-1 my-1.5">
           {listItems.map((item, j) => (
-            <li key={j} className="flex gap-2 text-[13px] text-white/82 leading-relaxed">
+            <li key={j} className="flex gap-2 text-white/82" style={{ fontSize, lineHeight: 1.65, letterSpacing: '0.01em' }}>
               <span className="text-indigo-400/70 flex-shrink-0 font-mono text-[11px] mt-0.5 w-4 text-right">{j + 1}.</span>
               <span><InlineText text={item} /></span>
             </li>
@@ -1986,8 +2269,9 @@ function TextBlocks({ text }: { text: string }) {
     if (h3m || h2m || h1m) {
       flushList()
       const txt = (h3m || h2m || h1m)![1]
-      const cls = h3m ? 'text-[12.5px] font-semibold text-white/80' : h2m ? 'text-[13px] font-bold text-white/85' : 'text-[14px] font-bold text-white/90'
-      blocks.push(<p key={key++} className={`${cls} leading-snug mt-2 mb-0.5`}><InlineText text={txt} /></p>)
+      const cls = h3m ? 'font-semibold text-white/80' : h2m ? 'font-bold text-white/85' : 'font-bold text-white/90'
+      const headingSize = h3m ? fontSize - 0.5 : h2m ? fontSize : fontSize + 1
+      blocks.push(<p key={key++} className={`${cls} leading-snug mt-2 mb-0.5`} style={{ fontSize: headingSize }}><InlineText text={txt} /></p>)
       continue
     }
 
@@ -2015,17 +2299,17 @@ function TextBlocks({ text }: { text: string }) {
     }
 
     flushList()
-    blocks.push(<p key={key++} className="text-[13px] text-white/82 leading-relaxed"><InlineText text={t} /></p>)
+    blocks.push(<p key={key++} className="text-white/82" style={{ fontSize, lineHeight: 1.65, letterSpacing: '0.01em' }}><InlineText text={t} /></p>)
   }
   flushList()
   return <>{blocks}</>
 }
 
 // ─── AnswerText — markdown-aware renderer ────────────────────────────────────
-function AnswerText({ content }: { content: string }) {
+function AnswerText({ content, fontSize }: { content: string; fontSize: number }) {
   const segments = content.split(/(```[\s\S]*?```)/g)
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' } as React.CSSProperties}>
       {segments.map((seg, i) => {
         if (seg.startsWith('```')) {
           const inner = seg.slice(3, -3)
@@ -2033,17 +2317,20 @@ function AnswerText({ content }: { content: string }) {
           const lang  = nlIdx > 0 ? inner.slice(0, nlIdx).trim() : ''
           const code  = nlIdx >= 0 ? inner.slice(nlIdx + 1) : inner
           return (
-            <div key={i} className="rounded-xl overflow-hidden"
-                 style={{ background: 'rgba(255,255,255,0.04)', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.07)' }}>
+            <div key={i} className="overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.07)', borderRadius: 8 }}>
               {lang && (
                 <div className="px-3 py-1 text-[9px] text-white/30 font-mono uppercase tracking-wider"
                      style={{ boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.06)' }}>{lang}</div>
               )}
-              <pre className="px-3 py-2.5 text-[11px] font-mono text-green-200/75 overflow-x-auto whitespace-pre leading-relaxed">{code}</pre>
+              <pre className="text-[11px] font-mono text-green-200/75 overflow-x-auto whitespace-pre leading-relaxed" style={{ padding: '12px 16px' }}>
+                {code.split('\n').map((line, li) => (
+                  <div key={li} className="code-line" style={{ margin: '0 -16px', padding: '0 16px' }}>{line || ' '}</div>
+                ))}
+              </pre>
             </div>
           )
         }
-        return <TextBlocks key={i} text={seg} />
+        return <TextBlocks key={i} text={seg} fontSize={fontSize} />
       })}
     </div>
   )

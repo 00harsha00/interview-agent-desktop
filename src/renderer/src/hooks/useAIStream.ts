@@ -27,7 +27,7 @@ export function useAIStream({ callSessionId, extraContext, onChunk, onDone, onEr
     bufRef.current = ''
   }, [])
 
-  const ask = useCallback((question: string, images?: string[]) => {
+  const ask = useCallback((question: string, images?: string[], isRegenerate?: boolean) => {
     if (!question.trim()) return
     abort() // cancel any in-flight request
 
@@ -58,6 +58,7 @@ export function useAIStream({ callSessionId, extraContext, onChunk, onDone, onEr
       },
       images,
       optsRef.current.extraContext,
+      isRegenerate,
     )
   }, [abort])
 

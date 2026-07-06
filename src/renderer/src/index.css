@@ -202,11 +202,6 @@ button, input, a, select, textarea {
 }
 
 /* ── Animations ──────────────────────────────────────────────────── */
-@keyframes wave {
-  0%   { height: 2px; }
-  100% { height: 12px; }
-}
-
 @keyframes fadeSlideDown {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -265,8 +260,30 @@ button, input, a, select, textarea {
   animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.cursor-blink {
-  animation: blink 0.7s step-end infinite;
+@keyframes answerCursorBlink {
+  0%, 100% { opacity: 0; }
+  50%      { opacity: 1; }
+}
+.answer-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: currentColor;
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: answerCursorBlink 1s ease-in-out infinite;
+}
+
+@keyframes answerFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.answer-fade-in {
+  animation: answerFadeIn 0.15s ease both;
+}
+
+.code-line:hover {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* ── Form inputs — enhanced focus glow ───────────────────────────────────── */

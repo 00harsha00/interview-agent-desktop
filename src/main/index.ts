@@ -33,7 +33,18 @@ const IS_HTTPS_BACKEND = BACKEND_URL.startsWith('https://')
 const SESSION_COOKIE_NAMES = ['__Secure-next-auth.session-token', 'next-auth.session-token'] as const
 const TOOLBAR_H  = 48   // toolbar-only height
 const MODAL_H    = 340  // activation modal height
-const WIN_W_INIT = 860  // initial width (may be updated after screen query)
+const APP_WIDTH_MIN = 360  // never narrower, even on a tiny screen
+const APP_WIDTH_MAX = 900  // never wider, even on a huge monitor
+// App width = 4/9 of the primary display's work-area width (clamped), computed
+// once when the app is ready (screen.getPrimaryDisplay() isn't available
+// before then) and cached here. Deliberately not re-derived on every use — the
+// window stays whatever width it was born at for the rest of the run;
+// display-metrics-changed is not watched, so this never shifts mid-session.
+let appWidth = 480  // placeholder until computeAppWidth() runs in app.whenReady()
+function computeAppWidth(): number {
+  const raw = Math.floor(screen.getPrimaryDisplay().workAreaSize.width * 4 / 9)
+  return Math.min(APP_WIDTH_MAX, Math.max(APP_WIDTH_MIN, raw))
+}
 
 // ─── HTTP utility for in-app sign-in ─────────────────────────────────────────
 interface NodeHttpResponse {
@@ -131,6 +142,139 @@ let mainWindow: BrowserWindow | null = null
 let pendingProtocolUrl: string | null = null
 let activeAuthToken: string | null = null  // token injected into outgoing requests
 
+// ─── Settings popover: its own window ──────────────────────────────────────────
+// The popover used to render inside the main window (position:fixed portal),
+// which is what caused every round of "window jumps/clips/flickers when the
+// popover opens" — the main window's auto-fit-height effect had to grow it to
+// make room, and every position calculation was relative to the main
+// window's own (small, snap-anchored) bounds. A real second BrowserWindow
+// sidesteps the whole problem: it's positioned in actual screen coordinates,
+// never affects the main window's size, and can never be clipped by it.
+// resizePaused/window:pause-resize from the previous round are gone — the
+// main window no longer has any reason to grow for the popover at all.
+let popoverWindow: BrowserWindow | null = null
+// Anchor captured from the hamburger button's screen position when the
+// popover opens — recomputing bounds when the real content height arrives
+// (see popover:report-height) needs this without asking the renderer again.
+let popoverAnchor: { screenX: number; screenY: number; buttonW: number; buttonH: number; flipped: boolean } | null = null
+// Timestamp of the last .show() — guards against a spurious 'blur' firing
+// within an instant of showing an alwaysOnTop window while another window
+// (main) still has OS focus, a known Electron/macOS race that could hide
+// the popover again almost immediately after it appears.
+let popoverJustShownAt = 0
+const POPOVER_BLUR_GRACE_MS = 200
+const POPOVER_W = 300
+const POPOVER_DEFAULT_H = 600   // generous placeholder so first paint already shows most/all content before report-height refines it
+const POPOVER_MAX_H = 600
+const POPOVER_EDGE_MARGIN = 8
+
+function positionPopoverWindow(height: number): void {
+  if (!popoverWindow || !popoverAnchor) return
+  const { screenX, screenY, buttonW, buttonH, flipped } = popoverAnchor
+  const display = screen.getDisplayMatching({ x: Math.round(screenX), y: Math.round(screenY), width: 1, height: 1 })
+  const wa = display.workArea
+
+  // Clamp to however much room ACTUALLY exists in the direction this
+  // popover opens (not just a flat constant) — this is what guarantees it
+  // never needs internal scrolling AND never goes off-screen, regardless of
+  // monitor size or where the button sits on it. Flipped (bottom snap)
+  // grows upward, so the limit is the room between the button and the
+  // screen's top edge; otherwise it grows downward, limited by the room
+  // between the button and the screen's bottom edge.
+  const roomAvailable = flipped
+    ? screenY - wa.y - POPOVER_EDGE_MARGIN * 2
+    : wa.y + wa.height - (screenY + buttonH) - POPOVER_EDGE_MARGIN * 2
+  const h = Math.round(Math.max(80, Math.min(height, POPOVER_MAX_H, roomAvailable)))
+
+  // Horizontal: right-align to the button's right edge (mirrors the old
+  // in-window anchor), clamped so it never crosses either screen edge.
+  let x = screenX + buttonW - POPOVER_W
+  x = Math.max(wa.x + POPOVER_EDGE_MARGIN, Math.min(x, wa.x + wa.width - POPOVER_W - POPOVER_EDGE_MARGIN))
+
+  // Vertical: below the button normally; above it (growing upward) when
+  // flipped (bottom snap positions) — recomputed from the FINAL clamped
+  // height each time, so the popover's bottom edge always stays anchored
+  // right against the button, however tall it ends up being (this is why
+  // this reuses the same anchor-based math as the initial open rather than
+  // just adjusting height in place: doing that would grow it downward from
+  // its current top instead of upward from the button for flipped positions).
+  let y: number
+  if (flipped) {
+    y = Math.max(wa.y + POPOVER_EDGE_MARGIN, screenY - h - POPOVER_EDGE_MARGIN)
+  } else {
+    y = screenY + buttonH + POPOVER_EDGE_MARGIN
+    y = Math.min(y, wa.y + wa.height - h - POPOVER_EDGE_MARGIN)
+    y = Math.max(wa.y + POPOVER_EDGE_MARGIN, y)
+  }
+
+  popoverWindow.setBounds({ x: Math.round(x), y: Math.round(y), width: POPOVER_W, height: h })
+}
+
+function hidePopoverWindow(): void {
+  if (!popoverWindow) return
+  popoverWindow.hide()
+  // Tell the main window it's closed — it autonomously hides itself on blur/
+  // Escape, so the main window's "is the menu open" state needs to hear
+  // about that independently of whoever asked it to open in the first place.
+  mainWindow?.webContents.send('popover:closed')
+}
+
+function createPopoverWindow(): void {
+  popoverWindow = new BrowserWindow({
+    width: POPOVER_W,
+    height: POPOVER_DEFAULT_H,
+    x: -10000, y: -10000,   // parked off-screen until positioned — avoids a flash at (0,0)
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    roundedCorners: false,
+    resizable: false,
+    movable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: !IS_DEV,
+      backgroundThrottling: false,
+    },
+  })
+  popoverWindow.setContentProtection(CONTENT_PROTECTION)
+  popoverWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  popoverWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+  popoverWindow.setIgnoreMouseEvents(false)
+
+  popoverWindow.webContents.on('did-fail-load', (_e, code, desc, validatedURL) => {
+    console.error('[popover] did-fail-load:', code, desc, validatedURL)
+  })
+
+  const popoverUrl = IS_DEV && RENDERER_DEV_URL ? `${RENDERER_DEV_URL}?view=popover` : null
+  if (popoverUrl) {
+    popoverWindow.loadURL(popoverUrl)
+  } else {
+    popoverWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { view: 'popover' } })
+  }
+
+  // Closing (blur = click-outside, since this window is skipTaskbar/
+  // alwaysOnTop with nothing else of ours to click) is the popover's own
+  // decision — Escape inside the popover's renderer calls popover:hide too.
+  // The grace-period guard skips a blur that fires immediately after
+  // showing: a known Electron/macOS race for alwaysOnTop windows shown
+  // while another window still holds OS focus can deliver a spurious blur
+  // within milliseconds, which would otherwise hide the popover the instant
+  // it appears — indistinguishable from "the popover never showed at all".
+  popoverWindow.on('blur', () => {
+    const sinceShown = Date.now() - popoverJustShownAt
+    if (sinceShown < POPOVER_BLUR_GRACE_MS) return
+    hidePopoverWindow()
+  })
+  popoverWindow.on('closed', () => { popoverWindow = null })
+}
+
 // ─── Window factory ───────────────────────────────────────────────────────────
 // ─── Snap-position persistence (main-side, so the window is born in place) ────
 const SNAP_MARGIN = 8
@@ -148,9 +292,13 @@ function saveSnapPos(pos: string): void {
   try { writeFileSync(snapPosPath(), pos, 'utf8') } catch { /* ignore */ }
 }
 
-/** x/y for a snap position given window size, with 8px work-area margins */
-function computeSnapXY(pos: string, w: number, h: number): [number, number] {
-  const wa = screen.getPrimaryDisplay().workArea
+/** x/y for a snap position given window size, with 8px work-area margins.
+ *  Accepts an explicit work area (e.g. a non-primary display's) — defaults
+ *  to the primary display's, which is what every existing call site wants. */
+function computeSnapXY(
+  pos: string, w: number, h: number,
+  wa: Electron.Rectangle = screen.getPrimaryDisplay().workArea
+): [number, number] {
   const lx = wa.x + SNAP_MARGIN
   const cx = wa.x + Math.round((wa.width - w) / 2)
   const rx = wa.x + wa.width - w - SNAP_MARGIN
@@ -167,11 +315,32 @@ function computeSnapXY(pos: string, w: number, h: number): [number, number] {
   return positions[pos] ?? positions[SNAP_DEFAULT]
 }
 
+/** Shared snap logic — used by both the window:move-to IPC handler (UI
+ *  clicks) and the global snap-position keyboard shortcuts. */
+function moveToSnap(pos: string): void {
+  if (!mainWindow) return
+  // Popover's anchor is a screen-coordinate snapshot from open time — moving
+  // the main window invalidates it, so close it rather than leave it
+  // floating wherever it was, disconnected from the button that opened it.
+  hidePopoverWindow()
+  // Snap relative to whichever display the window is CURRENTLY on — not
+  // always the primary. Re-detected fresh on every call (not cached), so
+  // it's automatically correct after a Screen-selector move to another display.
+  const currentDisplay = screen.getDisplayMatching(mainWindow.getBounds())
+  const wa = currentDisplay.workArea
+  const w = Math.min(appWidth, wa.width - 2 * SNAP_MARGIN)
+  const [, h] = mainWindow.getSize()
+  mainWindow.setSize(w, h, false)
+  const [x, y] = computeSnapXY(pos, w, h, wa)
+  mainWindow.setPosition(x, y, true)
+  saveSnapPos(pos)
+}
+
 function createWindow(): void {
   nativeTheme.themeSource = 'dark'
 
   const { width: sw } = screen.getPrimaryDisplay().workAreaSize
-  const winW = Math.min(WIN_W_INIT, sw - 40)
+  const winW = Math.min(appWidth, sw - 40)
   // Born in the persisted snap position (default top-center) — applied at
   // creation, before show, so the window never flashes in the wrong place.
   const [winX, winY] = computeSnapXY(loadSnapPos(), winW, MODAL_H)
@@ -188,7 +357,7 @@ function createWindow(): void {
     hasShadow: false,
     roundedCorners: false,
     alwaysOnTop: true,
-    resizable: false,     // fixed 860px width; height is driven programmatically
+    resizable: false,     // fixed width (1/3 of the screen); height is driven programmatically
     movable: false,       // repositioning only via the 6-position picker
     minHeight: TOOLBAR_H,
     skipTaskbar: false,
@@ -213,6 +382,16 @@ function createWindow(): void {
   // forward:true keeps mousemove flowing to the renderer so its hit-test works.
   mainWindow.setIgnoreMouseEvents(true, { forward: true })
 
+  // ── Hard lock against manual edge-resize ──────────────────────────────────────
+  // resizable:false is set above, but frameless/transparent windows on macOS are
+  // known to still expose a live-resize region on the left/right edges even with
+  // the style mask cleared (top/bottom are unaffected). will-resize only fires
+  // for user-driven (manual) resize gestures — never for our own setSize/
+  // setBounds calls — so vetoing it unconditionally blocks every edge without
+  // touching the programmatic resizing the app relies on (activation, snap
+  // moves, mini-bar, auto-fit height).
+  mainWindow.on('will-resize', (event) => { event.preventDefault() })
+
   // ── System audio capture: intercept getDisplayMedia and inject loopback ──────
   session.defaultSession.setDisplayMediaRequestHandler((_req, callback) => {
     desktopCapturer
@@ -235,6 +414,7 @@ function createWindow(): void {
 
   // ── Window ready ─────────────────────────────────────────────────────────────
   mainWindow.once('ready-to-show', () => {
+    mainWindow!.setResizable(false)  // re-assert post-show — belt-and-suspenders for the same macOS quirk
     mainWindow!.show()
     // Dispatch any protocol URL that arrived before window was ready
     if (pendingProtocolUrl) {
@@ -491,6 +671,10 @@ function registerIPC(): void {
   ipcMain.handle('window:close',    () => mainWindow?.close())
   ipcMain.handle('window:hide',     () => mainWindow?.hide())
   ipcMain.handle('window:show',     () => { mainWindow?.show(); mainWindow?.focus() })
+  // Escape hatch for the renderer to request the full bringToFront()
+  // sequence directly (e.g. during session initialization), rather than
+  // just the plain show+focus above.
+  ipcMain.handle('window:force-show', () => { bringToFront() })
   ipcMain.handle('window:toggle',   () => {
     if (!mainWindow) return
     mainWindow.isVisible() ? mainWindow.hide() : (mainWindow.show(), mainWindow.focus())
@@ -523,35 +707,109 @@ function registerIPC(): void {
       mainWindow.setSize(w, newH, false)
     }
   })
+  // ── Settings popover IPC ────────────────────────────────────────────────────
+  ipcMain.handle('popover:show', (_e, coords: { x: number; y: number; width: number; height: number; flipped: boolean }) => {
+    if (!mainWindow) { console.warn('[popover:show] no mainWindow — aborting'); return }
+    if (!popoverWindow || popoverWindow.isDestroyed()) {
+      createPopoverWindow()
+    }
+    const mainBounds = mainWindow.getBounds()
+    popoverAnchor = {
+      screenX: mainBounds.x + coords.x,
+      screenY: mainBounds.y + coords.y,
+      buttonW: coords.width,
+      buttonH: coords.height,
+      flipped: coords.flipped,
+    }
+    // Show immediately with a reasonable default size rather than waiting
+    // for popover:report-height — if that message is ever late, dropped, or
+    // never arrives at all (e.g. the popover's renderer failed to mount),
+    // the old flow left the window hidden forever, which is indistinguishable
+    // from "the popover doesn't work". report-height still arrives a moment
+    // later and refines the bounds to the real content height; it's no
+    // longer a precondition for visibility at all.
+    positionPopoverWindow(POPOVER_DEFAULT_H)
+    popoverJustShownAt = Date.now()
+    popoverWindow!.setAlwaysOnTop(true, 'screen-saver', 1)
+    popoverWindow!.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    popoverWindow!.show()
+  })
+  ipcMain.on('popover:hide', () => hidePopoverWindow())
+  ipcMain.on('popover:update-settings', (_e, settings) => {
+    popoverWindow?.webContents.send('popover:settings', settings)
+  })
+  ipcMain.on('popover:action', (_e, action) => {
+    mainWindow?.webContents.send('popover:action', action)
+  })
+  ipcMain.on('popover:report-height', (_e, height: number) => {
+    positionPopoverWindow(height)
+  })
   ipcMain.handle('window:set-size', (_e, w: number, h: number) => {
     if (!mainWindow) return
     mainWindow.setSize(Math.round(w), Math.round(h), false)
   })
-  // Renderer needs this to compute the 70% max-height clamp for auto-fit sizing.
+  // Renderer needs this to compute the 70% max-height clamp for auto-fit sizing,
+  // and appWidth so it can restore to the real window width (not a hardcoded
+  // guess) after exiting the mini-bar.
   ipcMain.handle('window:get-work-area', () => {
     const wa = screen.getPrimaryDisplay().workArea
-    return { width: wa.width, height: wa.height }
+    return { width: wa.width, height: wa.height, appWidth }
   })
   ipcMain.handle('window:set-ignore-mouse', (_e, ignore: boolean) => {
     mainWindow?.setIgnoreMouseEvents(ignore, { forward: true })
   })
-  // "Private" toggle — hide the overlay from screen shares/recordings
+  // "Private" toggle — hide the overlay from screen shares/recordings.
+  // Applies to the popover window too — otherwise a screen share started
+  // with Private on would still leak the settings menu while it's open.
   ipcMain.handle('window:set-content-protection', (_e, on: boolean) => {
     mainWindow?.setContentProtection(on)
+    popoverWindow?.setContentProtection(on)
   })
 
   // Position presets — 6 snap positions with 8px margins from the work area.
   // Width is fixed: re-apply it on every snap so the overlay stays anchored.
   // The chosen position is persisted main-side so the next launch is born there.
   ipcMain.handle('window:move-to', (_e, pos: string) => {
+    moveToSnap(pos)
+  })
+
+  // ── Multi-monitor: list displays + move the window to one ────────────────────
+  ipcMain.handle('window:get-displays', () => {
+    const displays = screen.getAllDisplays()
+    const primaryId = screen.getPrimaryDisplay().id
+    const externalCount = displays.filter((d) => !d.internal).length
+    let externalSeen = 0
+    const list = displays.map((d, i) => {
+      let label: string
+      if (d.internal) label = 'Built-in Display'
+      else if (displays.some((o) => o.internal)) {
+        externalSeen += 1
+        label = externalCount > 1 ? `External Display ${externalSeen}` : 'External Display'
+      } else {
+        label = `Display ${i + 1}`
+      }
+      return { id: d.id, label, bounds: d.bounds, isPrimary: d.id === primaryId }
+    })
+    const currentId = mainWindow
+      ? screen.getDisplayMatching(mainWindow.getBounds()).id
+      : primaryId
+    return { displays: list, currentId }
+  })
+  ipcMain.handle('window:move-to-display', (_e, displayId: number) => {
     if (!mainWindow) return
-    const wa = screen.getPrimaryDisplay().workArea
-    const w = Math.min(WIN_W_INIT, wa.width - 2 * SNAP_MARGIN)
-    const [, h] = mainWindow.getSize()
-    mainWindow.setSize(w, h, false)
-    const [x, y] = computeSnapXY(pos, w, h)
-    mainWindow.setPosition(x, y, true)
-    saveSnapPos(pos)
+    const target = screen.getAllDisplays().find((d) => d.id === displayId)
+    if (!target) return
+    // Popover's anchor is a screen-coordinate snapshot from open time — moving
+    // to another display invalidates it, so close it rather than leave it
+    // stranded on the old display.
+    hidePopoverWindow()
+    // Keep the current snap position (top-left, bottom-center, etc.) but
+    // recompute it against the TARGET display's work area, so the window
+    // lands in the equivalent spot on the new screen rather than just its center.
+    const [w, h] = mainWindow.getSize()
+    const pos = loadSnapPos()
+    const [x, y] = computeSnapXY(pos, w, h, target.workArea)
+    mainWindow.setBounds({ x, y, width: w, height: h })
   })
 
   // App info
@@ -701,6 +959,7 @@ function registerShortcuts(): void {
     ['CommandOrControl+Shift+-',           'shortcut:toggle-chat'],      // ⌘⇧-
     ['CommandOrControl+Shift+Backspace',  'shortcut:clear'],            // ⌘⇧⌫
     ['CommandOrControl+Shift+H',          'shortcut:toggle-visibility'],
+    ['CommandOrControl+H',                'shortcut:toggle-collapse'],  // ⌘H — same as the ∧/∨ button
   ]
 
   shortcuts.forEach(([accelerator, channel]) => {
@@ -718,6 +977,48 @@ function registerShortcuts(): void {
       console.warn(`[main] Shortcut registration failed for ${accelerator}:`, err)
     }
   })
+
+  // Snap-position shortcuts — same underlying logic as clicking a position in
+  // the toolbar's mini grid (moveToSnap). Also flashes the corresponding
+  // button on the renderer's grid, since a keyboard shortcut (unlike a click)
+  // otherwise gives no visible acknowledgment that it did something.
+  const snapShortcuts: Array<[string, string]> = [
+    ['CommandOrControl+Shift+Up',    'top-center'],
+    ['CommandOrControl+Shift+Down',  'bottom-center'],
+    ['CommandOrControl+Shift+Left',  'top-left'],
+    ['CommandOrControl+Shift+Right', 'top-right'],
+  ]
+  snapShortcuts.forEach(([accelerator, pos]) => {
+    try {
+      const ok = globalShortcut.register(accelerator, () => {
+        moveToSnap(pos)
+        mainWindow?.webContents.send('window:snap-feedback', pos)
+      })
+      if (!ok) console.warn(`[main] Could not register shortcut: ${accelerator}`)
+    } catch (err) {
+      console.warn(`[main] Shortcut registration failed for ${accelerator}:`, err)
+    }
+  })
+
+  // Global "bring app to front" shortcut — works even when the app is
+  // hidden/backgrounded or collapsed to the mini pill. Ctrl+Cmd+I is the
+  // primary binding (macOS); Ctrl+Shift+I is registered ADDITIONALLY, and
+  // only on Windows, since that combo is the DevTools toggle on Mac and
+  // would collide with it there.
+  const focusApp = (): void => {
+    mainWindow?.webContents.send('shortcut:restore-from-mini')
+    bringToFront()
+    mainWindow?.webContents.send('shortcut:app-focused')
+  }
+  const focusAccelerators = ['Control+Command+I', ...(process.platform === 'win32' ? ['Control+Shift+I'] : [])]
+  focusAccelerators.forEach((accelerator) => {
+    try {
+      const ok = globalShortcut.register(accelerator, focusApp)
+      if (!ok) console.warn(`[main] Could not register shortcut: ${accelerator}`)
+    } catch (err) {
+      console.warn(`[main] Shortcut registration failed for ${accelerator}:`, err)
+    }
+  })
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
@@ -730,11 +1031,21 @@ for (const protocol of SUPPORTED_PROTOCOLS) {
 }
 
 // Bring the (already-running) overlay to the front — used when a protocol URL
-// arrives while the app is alive but backgrounded/minimized.
+// arrives while the app is alive but backgrounded/minimized. This is also
+// what a *second* deep-link launch relies on (the first launch is a fresh
+// process that naturally comes up front; only the second+ needs this).
 function bringToFront(): void {
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
   mainWindow.show()
+  // Re-assert always-on-top/all-workspaces — on macOS these can silently
+  // fall away after certain focus-stealing/Space-switching interactions,
+  // which is a plausible reason a *second* activation stops floating above
+  // whatever the user is currently in even though the first one worked.
+  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  mainWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+  mainWindow.moveTop()
   mainWindow.focus()
   if (process.platform === 'darwin') {
     if (!HIDE_DOCK_ICON) void app.dock?.show()
@@ -747,10 +1058,28 @@ app.on('open-url', (event, url) => {
   event.preventDefault()
   console.log('[main] open-url received:', url)
   if (mainWindow) {
-    void dispatchProtocolUrl(url)
+    // Bring the window forward BEFORE dispatching the payload, so it's
+    // already visible/focused by the time session data lands and the
+    // renderer starts reacting to it.
     bringToFront()
+    void dispatchProtocolUrl(url)
   } else {
+    // mainWindow is null. Two different reasons that needs two different
+    // responses:
+    //  - Still launching (app.isReady() is false): open-url on macOS can
+    //    fire BEFORE the ready event when the app is launched via a URL
+    //    scheme — createWindow() calls screen.* internally, which throws
+    //    if the app isn't ready yet. Just queue the URL; the normal
+    //    app.whenReady().then() startup path below already calls
+    //    createWindow() and dispatches pendingProtocolUrl once ready.
+    //  - Already running but the window was CLOSED (e.g. the "X" in
+    //    IdleScreen calls window:close, which destroys it, not hides it):
+    //    nothing will ever call createWindow() again on its own, so the
+    //    queued URL would rot forever (macOS keeps the app running with
+    //    zero windows). A deep link is effectively an activation request,
+    //    so treat it as one and recreate the window ourselves.
     pendingProtocolUrl = url
+    if (app.isReady()) createWindow()
   }
 })
 
@@ -761,11 +1090,17 @@ if (!gotTheLock) {
 } else {
   app.on('second-instance', (_e, argv) => {
     const url = argv.find((a) => SUPPORTED_PROTOCOLS.some((protocol) => a.startsWith(`${protocol}://`)))
-    if (url) {
-      if (mainWindow) dispatchProtocolUrl(url)
-      else pendingProtocolUrl = url
+    if (mainWindow) {
+      // Bring forward first, then dispatch — same ordering as open-url above.
+      bringToFront()
+      if (url) dispatchProtocolUrl(url)
+    } else if (url) {
+      // Same reasoning as open-url above: only recreate the window
+      // ourselves if the app is already past startup (screen.* isn't safe
+      // to touch, via createWindow(), before app.isReady()).
+      pendingProtocolUrl = url
+      if (app.isReady()) createWindow()
     }
-    bringToFront()
   })
 }
 
@@ -784,6 +1119,7 @@ function loadToken(): string | null {
 
 app.whenReady().then(async () => {
   if (HIDE_DOCK_ICON) void app.dock?.hide()
+  appWidth = computeAppWidth()
   registerIPC()
 
   // Create window immediately; restore token in parallel (doesn't need to block UI)
@@ -795,6 +1131,7 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+  createPopoverWindow()   // pre-created hidden so it shows instantly on first hamburger click
   registerShortcuts()
 
   // ── Auto-update (packaged builds only) ──────────────────────────────────────

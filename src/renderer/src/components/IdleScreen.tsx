@@ -141,9 +141,12 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
             </button>
           )}
           <button onClick={() => onHide(view === 'create' ? CREATE_H : IDLE_H)}
-            className="text-[10px] text-white/35 hover:text-white/70 px-2 h-5 rounded-md transition-colors"
+            title="Collapse"
+            className="flex items-center justify-center h-6 w-6 rounded-md hover:bg-white/8 transition-all opacity-85 hover:opacity-100"
             style={{ boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.08)' }}>
-            Hide
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <polyline points="2,10 7,4 12,10" stroke="rgba(255,255,255,0.85)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
           <button onClick={() => window.electronAPI.window.close()}
             className="flex items-center justify-center h-6 w-6 rounded-md text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-all">

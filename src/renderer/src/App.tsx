@@ -3,11 +3,12 @@
  * Manages auth, session routing, deep-link handling, and mini-mode.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal }   from 'react-dom'
 import { useAuth }        from '@/hooks/useAuth'
 import { getSession }     from '@/lib/api'
 import { AuthGate }       from '@/components/AuthGate'
 import { IdleScreen }     from '@/components/IdleScreen'
-import { SessionOverlay } from '@/components/SessionOverlay'
+import { SessionOverlay, WaveformBars } from '@/components/SessionOverlay'
 import type { CallSession, SessionProtocolPayload } from '@/types'
 
 // Mouse-passthrough: transparent areas stay click-through
@@ -33,6 +34,49 @@ function useMousePassthrough() {
     }
     return () => { document.removeEventListener('mousemove', onMove); setIgnoreMouse(false) }
   }, [])
+}
+
+// ── Focus toast — brief "App focused" acknowledgment for the global
+// Ctrl+Cmd+I shortcut. Mounted as its own always-present sibling of <App/>
+// (see main.tsx) rather than inside App's own JSX, since App has several
+// early-return branches (loading/auth/idle/mini/session) and the toast needs
+// to show regardless of which one is currently active.
+export function FocusToast() {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    let hideTimer: ReturnType<typeof setTimeout> | undefined
+    const unsub = window.electronAPI.on('shortcut:app-focused', () => {
+      setVisible(true)
+      clearTimeout(hideTimer)
+      hideTimer = setTimeout(() => setVisible(false), 1500)
+    })
+    return () => { unsub(); clearTimeout(hideTimer) }
+  }, [])
+
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        top: 10,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: 'rgba(20,20,30,0.92)',
+        border: '1px solid rgba(139,92,246,0.4)',
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 11.5,
+        fontWeight: 500,
+        padding: '5px 12px',
+        borderRadius: 999,
+        pointerEvents: 'none',
+        zIndex: 999999,
+        opacity: visible ? 1 : 0,
+        transition: 'opacity 0.3s ease',
+      }}
+    >
+      App focused ⌃⌘I
+    </div>,
+    document.body,
+  )
 }
 
 // ── Mini-bar shown when "hidden" ───────────────────────────────────────────
@@ -114,35 +158,43 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
       onMouseDown={handleMouseDown}
       onClick={onRestore}
       title={showTimer ? 'Session running — click to expand' : 'Expand overlay'}
-      className={`relative h-9 select-none transition-all hover:scale-105 active:scale-95 flex items-center justify-center gap-1.5 ${showTimer ? 'rounded-full px-1.5 pr-3' : 'rounded-full w-9'}`}
+      className="relative select-none transition-all hover:scale-105 active:scale-95 flex items-center"
       style={{
-        background: showTimer ? 'rgba(8,8,12,0.95)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)',
-        boxShadow: showTimer
-          ? '0 2px 10px rgba(239,68,68,0.25), 0 0 0 1px rgba(239,68,68,0.35)'
-          : '0 2px 10px rgba(99,102,241,0.4), 0 0 0 1px rgba(255,255,255,0.12)',
+        // Glossy brand-color glass pill. Brand color = indigo #6366f1 →
+        // violet #8b5cf6 (the same gradient as the app icon/logo and every
+        // other accent in the app — see resources/icon.svg and
+        // tailwind.config's "accent-primary/secondary" — NOT the Answer
+        // button's green, which tailwind.config itself labels "legacy...
+        // for backwards compatibility" rather than the brand identity).
+        //
+        // No boxShadow/filter/backdropFilter anywhere on this pill: it's the
+        // only content on screen in front of a fully transparent Electron
+        // window (transparent:true), so there's nothing real behind it for a
+        // blur/shadow to composite against — that's the mechanism behind the
+        // recurring "white ring/halo" reports. Opacity and a plain border
+        // carry the depth instead.
+        background: 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(139,92,246,0.92) 100%)',
+        border: '1px solid rgba(139,92,246,0.6)',
+        borderRadius: 999,
+        padding: '6px 14px',
+        gap: 8,
         cursor: isDragging ? 'grabbing' : 'grab',
         userSelect: 'none',
       } as React.CSSProperties}
     >
-      {showTimer ? (
-        <>
-          <span className="relative h-6 w-6 rounded-full flex items-center justify-center flex-shrink-0"
-                style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
-            <span className="text-white font-black text-[9px] tracking-tight">IA</span>
-            {/* Recording/billing indicator — session is live and charging */}
-            <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse"
-                  style={{ boxShadow: '0 0 0 2px rgba(8,8,12,0.95), 0 0 6px rgba(239,68,68,0.8)' }} />
-          </span>
-          <span className="text-red-300 text-[11px] font-mono font-bold tabular-nums">{timerLabel}</span>
-        </>
-      ) : (
-        <>
-          <span className="text-white font-black text-[12px] tracking-tight">IA</span>
-          <span
-            className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full ${active ? 'bg-green-400 animate-pulse' : 'bg-white/30'}`}
-            style={{ boxShadow: '0 0 0 2px rgba(8,8,12,0.9)' }}
-          />
-        </>
+      <span className="relative flex items-center flex-shrink-0">
+        <WaveformBars active={active} />
+        {showTimer && (
+          // Recording/billing indicator — session is live and charging.
+          // Only shown once a session is actually running; otherwise the
+          // waveform's own static/animating state is the only status cue.
+          <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+        )}
+      </span>
+      {showTimer && (
+        <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 500, fontSize: 13 }} className="font-mono tabular-nums">
+          {timerLabel}
+        </span>
       )}
     </button>
   )
@@ -162,6 +214,16 @@ export default function App() {
   // Reported by SessionOverlay so the mini bar can show a live timer + billing dot
   const [sessionMeta,   setSessionMeta]   = useState<{ running: boolean; endsAt: number | null }>({ running: false, endsAt: null })
   const restoreHeightRef = useRef(340)
+  // The app's real width (1/3 of the screen, computed once in main) — fetched
+  // once so restoring from the mini-bar doesn't fall back to a hardcoded guess.
+  const appWidthRef = useRef(860)
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI.window.getWorkAreaSize?.().then((size) => {
+      if (!cancelled && size?.appWidth) appWidthRef.current = size.appWidth
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const handleHide = useCallback((currentHeight = 340) => {
     restoreHeightRef.current = currentHeight
@@ -171,12 +233,33 @@ export default function App() {
   const handleRestore = useCallback(() => {
     setMiniMode(false)
     window.electronAPI.window.setHeight(restoreHeightRef.current)
-    window.electronAPI.window.setSize(860, restoreHeightRef.current)
+    window.electronAPI.window.setSize(appWidthRef.current, restoreHeightRef.current)
   }, [])
+
+  // ⌘H (main-registered global shortcut) — same toggle as clicking the ∧/∨ button.
+  useEffect(() => {
+    return window.electronAPI.on('shortcut:toggle-collapse', () => {
+      if (miniMode) handleRestore()
+      else handleHide()
+    })
+  }, [miniMode, handleHide, handleRestore])
+
+  // Ctrl+Cmd+I (main-registered global "bring to front" shortcut) — restore
+  // out of the mini pill first, so the app doesn't just float forward still
+  // collapsed to a tiny bar.
+  useEffect(() => {
+    return window.electronAPI.on('shortcut:restore-from-mini', () => {
+      if (miniMode) handleRestore()
+    })
+  }, [miniMode, handleRestore])
 
   const loadSession = useCallback(async (sessionId: string) => {
     setLoadingSession(true)
     setSessionError(null)
+    // Belt-and-suspenders alongside main's own bringToFront() on the deep
+    // link itself — makes sure the window is actually in front by the time
+    // session data is ready to display, regardless of what state it was in.
+    void window.electronAPI.window.forceShow()
     try {
       const s = await getSession(sessionId)
       if (!s) { setSessionError('Session not found.'); return }

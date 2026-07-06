@@ -190,6 +190,7 @@ export function streamAIAnswer(
   onError: (err: string) => void,
   images?: string[],
   extraContext?: string,
+  isRegenerate?: boolean,
 ): void {
   fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
@@ -200,6 +201,7 @@ export function streamAIAnswer(
       question,
       ...(images?.length ? { images } : {}),
       ...(extraContext?.trim() ? { extraContext: extraContext.trim() } : {}),
+      ...(isRegenerate ? { isRegenerate: true } : {}),
     }),
     signal,
   })
