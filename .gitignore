@@ -12,3 +12,4 @@ out/
 .env.production
 # Icon build intermediate
 resources/MyIcon.iconset/
+*.tsbuildinfo
