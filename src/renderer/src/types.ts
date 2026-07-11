@@ -41,6 +41,12 @@ export interface TranscriptEntry {
   text: string
   isFinal: boolean
   timestamp: number
+  /** Which audio source this segment was captured from — determined from
+   *  the active mic/system toggle at the moment it was finalized. 'both'
+   *  mode can't be disambiguated (mic + system are mixed to mono before
+   *  reaching Speechmatics), so it's tagged SYSTEM (see speakerForAudioSrc
+   *  in SessionOverlay.tsx). */
+  speaker: 'MIC' | 'SYSTEM'
   /** true once this segment was consumed by an Answer (mirrors questionBufRef flush — display only) */
   sent?: boolean
 }

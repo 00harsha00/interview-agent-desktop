@@ -57,8 +57,10 @@
       "target": "dmg",
       "icon": "resources/icon.icns",
       "hardenedRuntime": true,
+      "gatekeeperAssess": false,
       "entitlements": "resources/entitlements.mac.plist",
-      "entitlementsInherit": "resources/entitlements.mac.plist"
+      "entitlementsInherit": "resources/entitlements.mac.plist",
+      "identity": null
     },
     "win": {
       "target": [

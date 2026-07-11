@@ -44,6 +44,11 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel, onRecovering, onR
   // typically fires 'ended' on multiple tracks AND a 'devicechange' event
   // within milliseconds of each other.
   const restartingRef = useRef(false)
+  // User's preferred mic device (from MicSelector) — a ref so a
+  // device-change restart (which calls doStart again internally) picks up
+  // whatever the latest preference is without needing it threaded through
+  // start()'s signature.
+  const micDeviceIdRef = useRef<string | undefined>(undefined)
 
   onPCMRef.current   = onPCMChunk
   onErrRef.current   = onError
@@ -160,16 +165,32 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel, onRecovering, onR
       // ── Microphone ────────────────────────────────────────────────────────────
       if (source === 'mic' || source === 'both' || (source === 'system' && !sysAudioOk)) {
         try {
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: false,
-              noiseSuppression: true,
-              autoGainControl: true,
-              sampleRate: 48_000,
-              channelCount: 1,
-            },
-            video: false,
-          })
+          const baseAudioConstraints = {
+            echoCancellation: false,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48_000,
+            channelCount: 1,
+          }
+          let micStream: MediaStream
+          try {
+            micStream = await navigator.mediaDevices.getUserMedia({
+              audio: micDeviceIdRef.current
+                ? { ...baseAudioConstraints, deviceId: { exact: micDeviceIdRef.current } }
+                : baseAudioConstraints,
+              video: false,
+            })
+          } catch (err) {
+            // Preferred device no longer exists (unplugged since last
+            // session, etc.) — fall back to the OS default rather than
+            // failing the whole capture over a stale saved preference.
+            if (micDeviceIdRef.current) {
+              console.warn('[useSystemAudio] Preferred mic unavailable, falling back to default:', err)
+              micStream = await navigator.mediaDevices.getUserMedia({ audio: baseAudioConstraints, video: false })
+            } else {
+              throw err
+            }
+          }
           streamsRef.current.push(micStream)
           micStream.getAudioTracks().forEach((t) => t.addEventListener('ended', stableDeviceChangeHandler))
           const micSource = ctx.createMediaStreamSource(micStream)
@@ -236,5 +257,12 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel, onRecovering, onR
     await doStart(source)
   }, [doStart])
 
-  return { start, stop }
+  // Takes effect on the next start()/restart — doesn't tear down and
+  // restart an already-running capture by itself (caller decides whether
+  // to restart immediately, same as toggling mic/system source does).
+  const setMicDeviceId = useCallback((deviceId: string | undefined) => {
+    micDeviceIdRef.current = deviceId
+  }, [])
+
+  return { start, stop, setMicDeviceId }
 }

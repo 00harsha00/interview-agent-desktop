@@ -1274,6 +1274,16 @@ function registerShortcuts(): void {
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
+// setAsDefaultProtocolClient registers the scheme differently per platform:
+// macOS reads CFBundleURLTypes from the packaged app's Info.plist (already
+// generated correctly by electron-builder from the "protocols" field in
+// package.json); Windows instead writes a
+// HKEY_CURRENT_USER\Software\Classes\<scheme>\shell\open\command registry
+// key pointing at the installed .exe — handled entirely by Electron/NSIS,
+// nothing extra needed here, but worth knowing when debugging "deep link
+// doesn't launch the app" on Windows: check that registry key exists and
+// points at the CURRENT install path (a stale key from a previous install
+// location is the usual cause).
 for (const protocol of SUPPORTED_PROTOCOLS) {
   try {
     app.setAsDefaultProtocolClient(protocol)

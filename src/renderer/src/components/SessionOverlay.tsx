@@ -25,9 +25,10 @@ import {
 import { FRONTEND_URL } from '@/config'
 import { useSpeechmatics } from '@/hooks/useSpeechmatics'
 import { useSystemAudio }  from '@/hooks/useSystemAudio'
+import { MicSelector, type AudioDevice } from '@/components/MicSelector'
 import { useAIStream }     from '@/hooks/useAIStream'
 import { useNetworkStatus } from '@/hooks/useNetworkStatus'
-import type { AIModel, CallSession, TranscriptEntry, SmConnectionState } from '@/types'
+import type { AIModel, CallSession, TranscriptEntry, SmConnectionState, AudioSource } from '@/types'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function uid() { return Math.random().toString(36).slice(2) }
@@ -50,6 +51,19 @@ const FONT_SIZE_DEFAULT = 14
 // it client-side means the 6th screenshot gets a clear "max 5" toast
 // instead of silently failing the entire send once it hits the backend.
 const MAX_SCREENSHOTS = 5
+
+/** Maps the active audio toggle state to the Speaker enum the backend
+ *  already has (Transcription.speaker: MIC | SYSTEM) — mic is the
+ *  candidate's own voice, system is whatever the OS is playing (typically
+ *  the interviewer, arriving via the call app's audio). 'both' can't be
+ *  disambiguated after useSystemAudio's mono mixdown (mic + system audio
+ *  are merged into one channel before Speechmatics ever sees it), so it's
+ *  tagged SYSTEM — the more useful side to have correctly labeled, and the
+ *  existing default so single-source sessions (the common case: mic starts
+ *  OFF) see no behavior change from this fix. */
+function speakerForAudioSrc(src: AudioSource): 'MIC' | 'SYSTEM' {
+  return src === 'mic' ? 'MIC' : 'SYSTEM'
+}
 
 // ─── Tiny shared components ───────────────────────────────────────────────────
 
@@ -1020,7 +1034,7 @@ export function SessionOverlay({
   const [copied,       setCopied]       = useState<string | null>(null)  // id of copied answer
 
   const isRunningRef   = useRef(false)
-  const saveQueueRef   = useRef<string[]>([])
+  const saveQueueRef   = useRef<{ text: string; speaker: 'MIC' | 'SYSTEM' }[]>([])
   const silenceRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
   const questionBufRef = useRef<string[]>([])
   const partialRef     = useRef('')
@@ -1057,6 +1071,12 @@ export function SessionOverlay({
     if (sysOn) return 'system' as const
     return 'none' as const
   }, [micOn, sysOn])
+  // Read inside the onFinal callback below without adding audioSrc to its
+  // dependency array (that callback is passed into useSpeechmatics, and
+  // this file's existing convention is "stable callback + ref for the
+  // latest value" rather than reconstructing callbacks on every toggle).
+  const audioSrcRef = useRef(audioSrc)
+  useEffect(() => { audioSrcRef.current = audioSrc }, [audioSrc])
 
   // ── Speechmatics ──────────────────────────────────────────────────────────
   const sm = useSpeechmatics({
@@ -1065,8 +1085,9 @@ export function SessionOverlay({
     onFinal: useCallback((text: string) => {
       if (!isRunningRef.current) return
       setPartial(''); partialRef.current = ''
-      setTranscript((p) => [...p, { id: uid(), text, isFinal: true, timestamp: Date.now() }])
-      saveQueueRef.current.push(text)
+      const speaker = speakerForAudioSrc(audioSrcRef.current)
+      setTranscript((p) => [...p, { id: uid(), text, isFinal: true, timestamp: Date.now(), speaker }])
+      saveQueueRef.current.push({ text, speaker })
       questionBufRef.current.push(text)
       // Auto-detect gates the silence-based question detection; Auto Generate
       // (autoGen) gates auto-sending the detected question. Both must be on
@@ -1094,6 +1115,51 @@ export function SessionOverlay({
       setTimeout(() => setError(null), 2_500)
     }, []),
   })
+
+  // ── Mic device selection ──────────────────────────────────────────────────
+  const [micDevices,   setMicDevices]   = useState<AudioDevice[]>([])
+  const [selectedMicId, setSelectedMicId] = useState<string | undefined>(undefined)
+
+  // Device labels are only populated once mic permission has been granted
+  // at least once (browser privacy rule) — re-enumerate on every
+  // 'devicechange' too, so a newly-plugged-in mic shows up without needing
+  // a session restart.
+  useEffect(() => {
+    let cancelled = false
+    const refresh = () => {
+      navigator.mediaDevices.enumerateDevices().then((devices) => {
+        if (cancelled) return
+        const inputs = devices
+          .filter((d) => d.kind === 'audioinput')
+          .map((d, i): AudioDevice => ({ id: d.deviceId, label: d.label || `Microphone ${i + 1}`, type: 'input' }))
+        setMicDevices(inputs)
+        // Saved preference may point at a device that's no longer
+        // connected — fall back to the OS default rather than silently
+        // failing capture on a stale id.
+        setSelectedMicId((current) => {
+          const saved = current ?? localStorage.getItem('preferredMicDeviceId') ?? undefined
+          return saved && inputs.some((d) => d.id === saved) ? saved : undefined
+        })
+      }).catch(() => {})
+    }
+    refresh()
+    navigator.mediaDevices.addEventListener('devicechange', refresh)
+    return () => { cancelled = true; navigator.mediaDevices.removeEventListener('devicechange', refresh) }
+  }, [])
+
+  useEffect(() => {
+    audio.setMicDeviceId(selectedMicId)
+  }, [selectedMicId, audio])
+
+  const onMicDeviceChange = useCallback((deviceId: string) => {
+    setSelectedMicId(deviceId)
+    localStorage.setItem('preferredMicDeviceId', deviceId)
+    // Take effect immediately if mic is already live, not just next start().
+    if (isRunningRef.current && (audioSrc === 'mic' || audioSrc === 'both')) {
+      audio.start(audioSrc).catch((err: Error) => setError(`Audio: ${err.message}`))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audio, audioSrc])
 
   const ai = useAIStream({
     callSessionId: session.id,
@@ -1260,7 +1326,7 @@ export function SessionOverlay({
     isRunningRef.current = false; setIsRunning(false)
     const remaining = saveQueueRef.current.splice(0)
     if (remaining.length > 0) {
-      await saveTranscriptions(session.id, remaining.map((t) => ({ speaker: 'SYSTEM', text: t }))).catch(() => {})
+      await saveTranscriptions(session.id, remaining.map((t) => ({ speaker: t.speaker, text: t.text }))).catch(() => {})
     }
     await updateSessionStatus(session.id, 'ENDED').catch(() => {})
     window.electronAPI.session.notifyEnded(session.id)
@@ -1280,7 +1346,7 @@ export function SessionOverlay({
       window.electronAPI.session.notifyEnded(session.id)
       const pending = saveQueueRef.current.splice(0)
       if (pending.length) {
-        void saveTranscriptions(session.id, pending.map((t) => ({ speaker: 'SYSTEM', text: t }))).catch(() => {})
+        void saveTranscriptions(session.id, pending.map((t) => ({ speaker: t.speaker, text: t.text }))).catch(() => {})
       }
       setFreeExpired(true)
       if (!hiddenRef.current) window.electronAPI.window.setHeight(MODAL_H)
@@ -1301,7 +1367,7 @@ export function SessionOverlay({
           window.electronAPI.session.notifyEnded(session.id)
           const pending = saveQueueRef.current.splice(0)
           if (pending.length) {
-            void saveTranscriptions(session.id, pending.map((t) => ({ speaker: 'SYSTEM', text: t }))).catch(() => {})
+            void saveTranscriptions(session.id, pending.map((t) => ({ speaker: t.speaker, text: t.text }))).catch(() => {})
           }
           setOutOfCredits(true)
           if (!hiddenRef.current) window.electronAPI.window.setHeight(MODAL_H)
@@ -1440,7 +1506,7 @@ export function SessionOverlay({
     const id = setInterval(async () => {
       const pending = saveQueueRef.current.splice(0)
       if (!pending.length || !isRunningRef.current) return
-      await saveTranscriptions(session.id, pending.map((t) => ({ speaker: 'SYSTEM', text: t }))).catch(
+      await saveTranscriptions(session.id, pending.map((t) => ({ speaker: t.speaker, text: t.text }))).catch(
         () => { saveQueueRef.current.unshift(...pending) }
       )
     }, TRANSCRIPT_SAVE_MS)
@@ -1711,6 +1777,9 @@ export function SessionOverlay({
         flashPos={flashPos}
         isOnline={isOnline}
         screenshotCount={screenshots.length}
+        micDevices={micDevices}
+        selectedMicId={selectedMicId}
+        onMicDeviceChange={onMicDeviceChange}
       />
 
       {/* ══ TRANSCRIPT STRIP — always visible: the queued "next question" tunnel ══ */}
@@ -1937,8 +2006,14 @@ const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, hei
                   key={t.id}
                   className="flex-shrink-0 max-w-[340px] truncate px-2.5 py-0.5 rounded-full leading-snug text-white"
                   style={{ background: 'rgba(255,255,255,0.10)', fontSize }}
-                  title={t.text}
+                  title={`${t.speaker === 'MIC' ? 'You' : 'Interviewer'}: ${t.text}`}
                 >
+                  <span
+                    className="font-semibold mr-1"
+                    style={{ color: t.speaker === 'MIC' ? 'rgba(167,139,250,0.85)' : 'rgba(255,255,255,0.4)' }}
+                  >
+                    {t.speaker === 'MIC' ? 'You:' : 'Interviewer:'}
+                  </span>
                   {t.text}
                 </span>
               ))}
@@ -2160,6 +2235,7 @@ interface ToolbarBarProps {
   aiModel: AIModel
   snapPos: SnapPos; onSnapMove: (p: SnapPos) => void; flashPos?: SnapPos | null
   isOnline: boolean; screenshotCount: number
+  micDevices: AudioDevice[]; selectedMicId?: string; onMicDeviceChange: (deviceId: string) => void
 }
 const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
   const isMicActive = p.isRunning && p.micOn
@@ -2201,7 +2277,9 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           </button>
           <Sep />
           <button onClick={p.onToggleMic}
-                  title={p.micOn ? 'Microphone enabled — click to disable' : 'Microphone disabled — click to enable'}
+                  title={p.micOn
+                    ? `Microphone enabled (${p.micDevices.find((d) => d.id === p.selectedMicId)?.label ?? 'default'}) — click to disable`
+                    : 'Microphone disabled — click to enable'}
                   className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
                     isMicActive ? 'text-red-400' : p.micOn ? 'text-white/50 hover:text-white/80' : 'text-white/20 hover:text-white/50',
                     isMicActive && 'bg-red-500/10')}>
@@ -2210,6 +2288,17 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             </svg>
             {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
           </button>
+          {/* Only shown once mic is on — picking an input device before
+              there's any capture running is meaningless, and it saves the
+              tight toolbar row the space otherwise. */}
+          {p.micOn && p.micDevices.length > 1 && (
+            <MicSelector
+              inputDevices={p.micDevices}
+              selectedInputId={p.selectedMicId}
+              onInputChange={p.onMicDeviceChange}
+              compact
+            />
+          )}
         </div>
         <Sep />
         <AnswerBtn
