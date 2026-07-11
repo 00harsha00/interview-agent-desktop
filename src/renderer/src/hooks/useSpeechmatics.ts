@@ -23,20 +23,28 @@ interface Options {
   onPartial:      (text: string) => void
   onFinal:        (text: string) => void
   onStateChange:  (state: SmConnectionState) => void
+  /** Called before every reconnect attempt — must return a FRESH JWT, never
+   *  a cached one. Speechmatics JWTs have only a 60s TTL, so reusing the
+   *  JWT from the original connect() on a reconnect that happens more than
+   *  ~60s later is a near-guaranteed failure. */
+  getFreshJwt:    () => Promise<string>
+  /** Fired once, after all reconnect attempts are exhausted. */
+  onReconnectFailed?: (message: string) => void
 }
 
-const MAX_RECONNECT_ATTEMPTS = 3
-const RECONNECT_DELAY_MS     = 2_000
+// Exponential backoff: 1s, 2s, 4s, 8s, 16s — 5 attempts total.
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000]
+const MAX_RECONNECT_ATTEMPTS = RECONNECT_DELAYS_MS.length
 
-export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }: Options) {
+export function useSpeechmatics({ language, onPartial, onFinal, onStateChange, getFreshJwt, onReconnectFailed }: Options) {
   const wsRef              = useRef<WebSocket | null>(null)
   const seqNoRef           = useRef(0)
-  const jwtRef             = useRef<string>('')          // stored so we can reconnect
+  const jwtRef             = useRef<string>('')          // last-used JWT, for debugging only — reconnects always fetch fresh
   const intentionalClose   = useRef(false)               // true = we called disconnect()
   const reconnectAttempts  = useRef(0)
   const reconnectTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const optsRef            = useRef({ language, onPartial, onFinal, onStateChange })
-  optsRef.current          = { language, onPartial, onFinal, onStateChange }
+  const optsRef            = useRef({ language, onPartial, onFinal, onStateChange, getFreshJwt, onReconnectFailed })
+  optsRef.current          = { language, onPartial, onFinal, onStateChange, getFreshJwt, onReconnectFailed }
 
   function clearReconnectTimer() {
     if (reconnectTimerRef.current) {
@@ -45,23 +53,14 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
     }
   }
 
-  const connect = useCallback((jwt: string) => {
-    // Tear down existing connection
-    intentionalClose.current = true
-    if (wsRef.current) {
-      wsRef.current.onclose = null
-      wsRef.current.close()
-      wsRef.current = null
-    }
-    intentionalClose.current = false
-    clearReconnectTimer()
+  // Core "open a WebSocket with this JWT" logic — deliberately does NOT
+  // touch reconnectAttempts, so scheduleReconnect() can track attempts
+  // across multiple establishConnection() calls until one succeeds.
+  const establishConnection = useCallback((jwt: string) => {
+    jwtRef.current  = jwt
+    seqNoRef.current = 0
 
-    jwtRef.current           = jwt
-    reconnectAttempts.current = 0
-    seqNoRef.current          = 0
-
-    console.log('[useSpeechmatics] Connecting with language:', language)
-    optsRef.current.onStateChange('connecting')
+    console.log('[useSpeechmatics] Connecting with language:', optsRef.current.language)
 
     const ws = new WebSocket(`${SM_RT_URL}?jwt=${encodeURIComponent(jwt)}`)
     ws.binaryType = 'arraybuffer'
@@ -94,7 +93,7 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
 
       switch (msg.message) {
         case 'RecognitionStarted':
-          reconnectAttempts.current = 0   // reset on successful connect
+          reconnectAttempts.current = 0   // reset on confirmed successful (re)connect
           optsRef.current.onStateChange('connected')
           break
 
@@ -126,26 +125,62 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
     }
 
     ws.onclose = () => {
-      // If we closed it intentionally (user ended session) — don't reconnect
+      // If we closed it intentionally (user ended session, or a fresh
+      // connect() tore down the old socket) — don't reconnect.
       if (intentionalClose.current) {
         optsRef.current.onStateChange('disconnected')
         return
       }
-
-      // Unexpected drop — attempt reconnect with back-off
-      if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS && jwtRef.current) {
-        reconnectAttempts.current++
-        const delay = RECONNECT_DELAY_MS * reconnectAttempts.current
-        console.info(`[Speechmatics] Unexpected close — reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`)
-        optsRef.current.onStateChange('connecting')
-        reconnectTimerRef.current = setTimeout(() => {
-          connect(jwtRef.current)
-        }, delay)
-      } else {
-        optsRef.current.onStateChange('disconnected')
-      }
+      scheduleReconnect()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Bounded exponential-backoff reconnect. ALWAYS fetches a fresh JWT before
+  // reconnecting — Speechmatics JWTs expire after 60s, so reusing the
+  // original one past that window would fail every single time.
+  function scheduleReconnect() {
+    if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+      console.error('[Speechmatics] Reconnect attempts exhausted — giving up')
+      optsRef.current.onStateChange('failed')
+      optsRef.current.onReconnectFailed?.('Transcription lost — please restart the session.')
+      return
+    }
+
+    const delay = RECONNECT_DELAYS_MS[reconnectAttempts.current]
+    reconnectAttempts.current++
+    console.info(`[Speechmatics] Unexpected close — reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${MAX_RECONNECT_ATTEMPTS})`)
+    optsRef.current.onStateChange('reconnecting')
+
+    reconnectTimerRef.current = setTimeout(async () => {
+      try {
+        const freshJwt = await optsRef.current.getFreshJwt()
+        establishConnection(freshJwt)
+      } catch (err) {
+        // Couldn't even mint a fresh JWT (network/backend down) — count this
+        // as a failed attempt too and keep trying on the same backoff.
+        console.error('[Speechmatics] Failed to fetch fresh JWT for reconnect:', err)
+        scheduleReconnect()
+      }
+    }, delay)
+  }
+
+  // Public API — a fresh, explicit connect (session start, language change).
+  // Always resets attempt count/state, unlike the internal auto-reconnect path.
+  const connect = useCallback((jwt: string) => {
+    // Tear down existing connection
+    intentionalClose.current = true
+    if (wsRef.current) {
+      wsRef.current.onclose = null
+      wsRef.current.close()
+      wsRef.current = null
+    }
+    intentionalClose.current = false
+    clearReconnectTimer()
+    reconnectAttempts.current = 0
+
+    optsRef.current.onStateChange('connecting')
+    establishConnection(jwt)
+  }, [establishConnection])
 
   const sendAudio = useCallback((buffer: ArrayBuffer) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -157,6 +192,7 @@ export function useSpeechmatics({ language, onPartial, onFinal, onStateChange }:
   // Graceful disconnect: flush remaining audio, prevent reconnect
   const disconnect = useCallback(() => {
     clearReconnectTimer()
+    reconnectAttempts.current = 0
     intentionalClose.current = true
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(

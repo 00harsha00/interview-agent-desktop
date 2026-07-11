@@ -3,6 +3,8 @@
  * Uses Electron's setDisplayMediaRequestHandler for no-picker system audio.
  * Audio is processed in an AudioWorklet (off-thread, zero GC pressure).
  * Exposes `onLevel` callback with 0–1 RMS amplitude for live VU metering.
+ * Detects device changes (e.g. headphones unplugged) mid-capture and
+ * automatically restarts the stream against whatever the OS default is now.
  */
 import { useCallback, useRef } from 'react'
 import type { AudioSource } from '@/types'
@@ -11,23 +13,55 @@ interface Options {
   onPCMChunk: (buffer: ArrayBuffer) => void
   onError:    (msg: string) => void
   onLevel?:   (level: number) => void  // 0–1 RMS amplitude, ~15 fps
+  /** Fired when a device change/track loss is detected and a restart is
+   *  starting — distinct from onError so callers can show a transient
+   *  amber "recovering" state instead of a hard error. */
+  onRecovering?: () => void
+  /** Fired once the restart succeeds. */
+  onRestored?: () => void
 }
 
-export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
+export function useSystemAudio({ onPCMChunk, onError, onLevel, onRecovering, onRestored }: Options) {
   const contextRef  = useRef<AudioContext | null>(null)
   const workletRef  = useRef<AudioWorkletNode | null>(null)
   const streamsRef  = useRef<MediaStream[]>([])
   const onPCMRef    = useRef(onPCMChunk)
   const onErrRef    = useRef(onError)
   const onLevelRef  = useRef(onLevel)
+  const onRecoveringRef = useRef(onRecovering)
+  const onRestoredRef   = useRef(onRestored)
   // Throttle level updates to ~15 fps (66ms) — no need for 50 fps UI updates
   const lastLevelTs = useRef(0)
+
+  // Tracks what `start()` was last asked to capture, so a device-change
+  // restart knows what to re-request without the caller telling it again.
+  const currentSourceRef = useRef<AudioSource>('none')
+  // True once stop() has run (or before the first start()) — restart
+  // handlers no-op while this is set, so a device event after the user
+  // ended the session (or toggled audio off) can't resurrect a capture.
+  const stoppedRef = useRef(true)
+  // Guards against overlapping restart attempts — unplugging headphones
+  // typically fires 'ended' on multiple tracks AND a 'devicechange' event
+  // within milliseconds of each other.
+  const restartingRef = useRef(false)
 
   onPCMRef.current   = onPCMChunk
   onErrRef.current   = onError
   onLevelRef.current = onLevel
+  onRecoveringRef.current = onRecovering
+  onRestoredRef.current   = onRestored
+
+  // Stable function identity for add/removeEventListener — delegates to
+  // whatever the latest handleDeviceChange closure is via a ref, so doStart
+  // doesn't need handleDeviceChange in its own dependency array (that would
+  // create a circular useCallback dependency between the two).
+  const handleDeviceChangeRef = useRef<() => void>(() => {})
+  const stableDeviceChangeHandler = useRef(() => { handleDeviceChangeRef.current() }).current
 
   const stop = useCallback(() => {
+    stoppedRef.current = true
+    navigator.mediaDevices.removeEventListener('devicechange', stableDeviceChangeHandler)
+
     workletRef.current?.port.postMessage('stop')
     workletRef.current?.disconnect()
     workletRef.current = null
@@ -40,11 +74,13 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
 
     // Reset level to 0 so bars go flat
     onLevelRef.current?.(0)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const start = useCallback(async (source: AudioSource): Promise<void> => {
+  const doStart = useCallback(async (source: AudioSource): Promise<void> => {
     stop()
     if (source === 'none') return   // both toggles off — stay silent
+    stoppedRef.current = false
 
     try {
       console.log('[useSystemAudio] Starting audio capture:', source)
@@ -103,6 +139,7 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
 
           const audioTracks = sysStream.getAudioTracks()
           if (audioTracks.length > 0) {
+            audioTracks.forEach((t) => t.addEventListener('ended', stableDeviceChangeHandler))
             const sysSource = ctx.createMediaStreamSource(new MediaStream(audioTracks))
             sysSource.connect(merger, 0, 0)
             sysAudioOk = true
@@ -134,6 +171,7 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
             video: false,
           })
           streamsRef.current.push(micStream)
+          micStream.getAudioTracks().forEach((t) => t.addEventListener('ended', stableDeviceChangeHandler))
           const micSource = ctx.createMediaStreamSource(micStream)
           micSource.connect(merger, 0, 0)
         } catch (err) {
@@ -150,11 +188,53 @@ export function useSystemAudio({ onPCMChunk, onError, onLevel }: Options) {
 
       if (ctx.state === 'suspended') await ctx.resume()
 
+      // Only watch for device changes once capture is actually up — avoids
+      // reacting to devicechange events that fire while we're still setting
+      // up (e.g. the permission prompt itself can trigger one).
+      navigator.mediaDevices.addEventListener('devicechange', stableDeviceChangeHandler)
+
     } catch (err) {
       stop()
       onErrRef.current(`Audio setup failed: ${(err as Error).message}`)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stop])
+
+  const handleDeviceChange = useCallback(() => {
+    if (stoppedRef.current || restartingRef.current) return
+    if (currentSourceRef.current === 'none') return
+
+    // A 'devicechange' event fires for ANY device plug/unplug system-wide —
+    // most are irrelevant. Only restart if OUR active stream actually lost
+    // a live track.
+    const tracks = streamsRef.current.flatMap((s) => s.getTracks())
+    const hasActiveTracks = tracks.length > 0 && tracks.every((t) => t.readyState === 'live')
+    if (hasActiveTracks) return
+
+    console.log('[useSystemAudio] Device change detected, stream lost — restarting')
+    restartingRef.current = true
+    onRecoveringRef.current?.()
+    onErrRef.current('Audio device changed — restarting…')
+
+    void (async () => {
+      await new Promise((r) => setTimeout(r, 500))  // let the OS settle
+      try {
+        await doStart(currentSourceRef.current)
+        onRestoredRef.current?.()
+      } catch (err) {
+        onErrRef.current(`Could not restart audio — please check your microphone/headphones. (${(err as Error).message})`)
+      } finally {
+        restartingRef.current = false
+      }
+    })()
+  }, [doStart])
+
+  handleDeviceChangeRef.current = handleDeviceChange
+
+  const start = useCallback(async (source: AudioSource): Promise<void> => {
+    currentSourceRef.current = source
+    await doStart(source)
+  }, [doStart])
 
   return { start, stop }
 }

@@ -370,6 +370,97 @@ function moveToSnap(pos: string): void {
   saveSnapPos(pos)
 }
 
+// ─── Display change recovery ──────────────────────────────────────────────────
+function isRectOnAnyDisplay(bounds: Electron.Rectangle): boolean {
+  return screen.getAllDisplays().some((d) => {
+    const wa = d.workArea
+    return (
+      bounds.x < wa.x + wa.width &&
+      bounds.x + bounds.width > wa.x &&
+      bounds.y < wa.y + wa.height &&
+      bounds.y + bounds.height > wa.y
+    )
+  })
+}
+
+/** Re-snaps the main window onto the primary display if it's no longer on
+ *  any currently-connected display (e.g. the external monitor it was on got
+ *  unplugged). Preserves the window's CURRENT size — deliberately does not
+ *  call moveToSnap() (which forces the full toolbar/modal width), since this
+ *  must also recover the mini-pill correctly, and the pill's compact size
+ *  would otherwise get blown back out to the full overlay width. */
+function reclampMainWindowIfOffScreen(reason: string): void {
+  if (!mainWindow) return
+  const bounds = mainWindow.getBounds()
+  if (isRectOnAnyDisplay(bounds)) return
+
+  console.log(`[display] window off-screen (${reason}) — moving to primary display`)
+  hidePopoverWindow()
+  const wa = screen.getPrimaryDisplay().workArea
+  const [x, y] = computeSnapXY(loadSnapPos(), bounds.width, bounds.height, wa)
+  mainWindow.setBounds({ x, y, width: bounds.width, height: bounds.height })
+  mainWindow.webContents.send('display:moved-to-primary', 'External display disconnected — moved to main screen')
+}
+
+function registerDisplayListeners(): void {
+  screen.on('display-removed', (_event, removedDisplay) => {
+    console.log('[display] removed:', removedDisplay.id)
+    reclampMainWindowIfOffScreen('display removed')
+  })
+
+  // Not off-screen recovery — just lets the settings popover's display
+  // picker (and any other display-aware UI) refresh instead of staying
+  // stale until the popover happens to be closed and reopened.
+  screen.on('display-added', (_event, newDisplay) => {
+    console.log('[display] added:', newDisplay.id)
+    mainWindow?.webContents.send('display:list-changed')
+    popoverWindow?.webContents.send('display:list-changed')
+  })
+
+  // Resolution/scaling change on the window's current display (or any
+  // display) — re-clamp so the window can't end up partially or fully
+  // outside the new, possibly-smaller work area.
+  screen.on('display-metrics-changed', (_event, display, changedMetrics) => {
+    console.log('[display] metrics changed:', display.id, changedMetrics)
+    if (!mainWindow) return
+    const bounds = mainWindow.getBounds()
+    const currentDisplay = screen.getDisplayMatching(bounds)
+    const wa = currentDisplay.workArea
+    const clampedX = Math.max(wa.x, Math.min(bounds.x, wa.x + wa.width - bounds.width))
+    const clampedY = Math.max(wa.y, Math.min(bounds.y, wa.y + wa.height - bounds.height))
+    if (clampedX !== bounds.x || clampedY !== bounds.y) {
+      mainWindow.setBounds({ ...bounds, x: clampedX, y: clampedY })
+    }
+  })
+}
+
+/** Picks the desktopCapturer source matching whichever display the app
+ *  window is currently on, instead of always taking sources[0] (which is
+ *  OS-ordered, typically the primary display — wrong on multi-monitor setups
+ *  where the app has been moved to an external display). */
+function pickSourceForCurrentDisplay(
+  sources: Electron.DesktopCapturerSource[]
+): Electron.DesktopCapturerSource {
+  const currentDisplay = mainWindow
+    ? screen.getDisplayMatching(mainWindow.getBounds())
+    : screen.getPrimaryDisplay()
+
+  // Primary match: desktopCapturer sources carry display_id on macOS 10.15+
+  // and Windows 8.1+ when available — the reliable, official way to match.
+  const byId = sources.find((s) => s.display_id && s.display_id === String(currentDisplay.id))
+  if (byId) return byId
+
+  // Fallback for platforms/Electron builds where display_id isn't populated:
+  // desktopCapturer's 'screen' sources are observed to come back in the same
+  // order as screen.getAllDisplays() in practice (not a documented Electron
+  // guarantee) — index-match against that as a best-effort second try.
+  const displays = screen.getAllDisplays()
+  const idx = displays.findIndex((d) => d.id === currentDisplay.id)
+  if (idx >= 0 && sources[idx]) return sources[idx]
+
+  return sources[0]
+}
+
 function createWindow(): void {
   nativeTheme.themeSource = 'dark'
 
@@ -426,14 +517,19 @@ function createWindow(): void {
   // moves, mini-bar, auto-fit height).
   mainWindow.on('will-resize', (event) => { event.preventDefault() })
 
-  // ── System audio capture: intercept getDisplayMedia and inject loopback ──────
+  // ── System audio capture + screenshots: intercept getDisplayMedia ────────────
+  // Shared by useSystemAudio's getDisplayMedia({audio:true,video:true}) (video
+  // track is discarded, only 'loopback' audio matters — display choice here is
+  // irrelevant to audio) AND SessionOverlay's screenshot capture, which DOES
+  // care: it must be the display the user/overlay is actually on, not
+  // whichever one desktopCapturer happens to list first.
   session.defaultSession.setDisplayMediaRequestHandler((_req, callback) => {
     desktopCapturer
       .getSources({ types: ['screen'] })
       .then((sources) => {
         if (sources.length === 0) { callback({}); return }
         // 'loopback' = system audio on macOS; 'loopbackWithMute' on Windows
-        callback({ video: sources[0], audio: 'loopback' as 'loopback' })
+        callback({ video: pickSourceForCurrentDisplay(sources), audio: 'loopback' as 'loopback' })
       })
       .catch(() => callback({}))
   })
@@ -1016,7 +1112,15 @@ function registerShortcuts(): void {
     ['CommandOrControl+Shift+-',           'shortcut:toggle-chat'],      // ⌘⇧-
     ['CommandOrControl+Shift+Backspace',  'shortcut:clear'],            // ⌘⇧⌫
     ['CommandOrControl+Shift+H',          'shortcut:toggle-visibility'],
-    ['CommandOrControl+H',                'shortcut:toggle-collapse'],  // ⌘H — same as the ∧/∨ button
+    // NOT CommandOrControl+H on macOS — that's the system-wide "Hide app"
+    // shortcut; registering it globally silently breaks Cmd+H in every
+    // other app for as long as this app is running. NOT
+    // CommandOrControl+Shift+H either — that's already bound to
+    // toggle-visibility above. Control+Command+H avoids both, but
+    // "Command" isn't a real modifier on Windows, so Windows keeps the
+    // original Ctrl+H (no system-wide "hide" shortcut exists there to
+    // conflict with).
+    [process.platform === 'darwin' ? 'Control+Command+H' : 'CommandOrControl+H', 'shortcut:toggle-collapse'],  // ⌃⌘H (Mac) / Ctrl+H (Win) — same as the ∧/∨ button
   ]
 
   shortcuts.forEach(([accelerator, channel]) => {
@@ -1278,6 +1382,7 @@ app.whenReady().then(async () => {
   createWindow()
   createPopoverWindow()   // pre-created hidden so it shows instantly on first hamburger click
   registerShortcuts()
+  registerDisplayListeners()
   startForcedLogoutPolling()
 
   // ── Auto-update (packaged builds only) ──────────────────────────────────────

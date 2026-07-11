@@ -83,6 +83,8 @@ const electronAPI = {
       'shortcut:app-focused',
       'auth:verify-warning',
       'auth:force-logout',
+      'display:moved-to-primary',
+      'display:list-changed',
     ])
     if (!ALLOWED.has(channel)) return () => {}
     const listener = (_: Electron.IpcRendererEvent, ...args: unknown[]) => fn(...args)

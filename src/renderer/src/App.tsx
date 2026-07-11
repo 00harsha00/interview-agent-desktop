@@ -118,7 +118,10 @@ export function AuthNoticeToast() {
     const u2 = window.electronAPI.on('auth:force-logout', () => {
       show("You've been signed out on another device", 5_000)
     })
-    return () => { u1(); u2(); clearTimeout(hideTimer) }
+    const u3 = window.electronAPI.on('display:moved-to-primary', (msg: unknown) => {
+      show((msg as string) || 'External display disconnected — moved to main screen', 4_000)
+    })
+    return () => { u1(); u2(); u3(); clearTimeout(hideTimer) }
   }, [])
 
   return createPortal(
@@ -304,7 +307,9 @@ export default function App() {
     window.electronAPI.window.setSize(appWidthRef.current, restoreHeightRef.current)
   }, [])
 
-  // ⌘H (main-registered global shortcut) — same toggle as clicking the ∧/∨ button.
+  // ⌃⌘H on macOS / Ctrl+H on Windows (main-registered global shortcut) —
+  // same toggle as clicking the ∧/∨ button. Not ⌘H — that's macOS's
+  // system-wide "Hide app" shortcut.
   useEffect(() => {
     return window.electronAPI.on('shortcut:toggle-collapse', () => {
       if (miniMode) handleRestore()

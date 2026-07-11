@@ -279,12 +279,18 @@ function SettingsPanel({
   const [currentDisplayId, setCurrentDisplayId] = useState<number | null>(null)
   useEffect(() => {
     let cancelled = false
-    window.electronAPI.window.getDisplays().then(({ displays, currentId }) => {
-      if (cancelled) return
-      setDisplays(displays)
-      setCurrentDisplayId(currentId)
-    }).catch(() => {})
-    return () => { cancelled = true }
+    const refresh = () => {
+      window.electronAPI.window.getDisplays().then(({ displays, currentId }) => {
+        if (cancelled) return
+        setDisplays(displays)
+        setCurrentDisplayId(currentId)
+      }).catch(() => {})
+    }
+    refresh()
+    // A monitor plugged/unplugged while this popover happens to be open
+    // would otherwise leave the list stale until it's closed and reopened.
+    const unsub = window.electronAPI.on('display:list-changed', refresh)
+    return () => { cancelled = true; unsub() }
   }, [])
 
   return (
@@ -1069,11 +1075,17 @@ export function SessionOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoGen, autoDetect]),
     onStateChange: setSmState,
+    getFreshJwt: useCallback(() => getSpeechmaticsJwt(session.id), [session.id]),
+    onReconnectFailed: useCallback((msg: string) => setError(msg), []),
   })
 
   const audio = useSystemAudio({
     onPCMChunk: sm.sendAudio,
     onError: (m) => setError(m),
+    onRestored: useCallback(() => {
+      setError('Audio restored ✓')
+      setTimeout(() => setError(null), 2_500)
+    }, []),
   })
 
   const ai = useAIStream({
@@ -2194,6 +2206,10 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             label = 'Listening'; bg = 'rgba(34,197,94,0.12)'; color = '#86efac'; ring = 'rgba(34,197,94,0.25)'; dotColor = '#4ade80'
           } else if (p.isRunning && p.smState === 'connecting') {
             label = 'Connecting'; bg = 'rgba(251,146,60,0.12)'; color = '#fdba74'; ring = 'rgba(251,146,60,0.22)'; dotColor = '#fb923c'
+          } else if (p.isRunning && p.smState === 'reconnecting') {
+            label = 'Reconnecting…'; bg = 'rgba(251,191,36,0.14)'; color = '#fde68a'; ring = 'rgba(251,191,36,0.28)'; dotColor = '#fbbf24'
+          } else if (p.isRunning && p.smState === 'failed') {
+            label = 'Transcription lost'; bg = 'rgba(239,68,68,0.14)'; color = '#fca5a5'; ring = 'rgba(239,68,68,0.28)'; dotColor = '#f87171'
           } else if (p.isRunning && p.smState === 'error') {
             label = 'Error'; bg = 'rgba(239,68,68,0.12)'; color = '#fca5a5'; ring = 'rgba(239,68,68,0.22)'; dotColor = '#f87171'
           } else {
@@ -2203,7 +2219,7 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[11px] font-semibold flex-shrink-0 whitespace-nowrap"
                  style={{ background: bg, color, boxShadow: `inset 0 0 0 1px ${ring}` }}>
               <span className="h-1.5 w-1.5 rounded-full flex-shrink-0"
-                    style={{ background: dotColor, animation: (p.isRunning && p.smState === 'connected') || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
+                    style={{ background: dotColor, animation: (p.isRunning && (p.smState === 'connected' || p.smState === 'reconnecting')) || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
               {label}
             </div>
           )
@@ -2215,10 +2231,10 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4zM10 12a2 2 0 100 4 2 2 0 000-4z" />
           </svg>
         </IBtn>
-        <IBtn title="Collapse (⌘H)" onClick={p.onHide} className="opacity-85 hover:opacity-100">
+        <IBtn title="Collapse (⌃⌘H)" onClick={p.onHide} className="opacity-85 hover:opacity-100">
           <ChevronUp />
         </IBtn>
-        <Kbd s="⌘H" />
+        <Kbd s="⌃⌘H" />
       </div>
     </>
   )

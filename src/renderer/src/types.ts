@@ -53,7 +53,11 @@ export interface AIMessage {
 }
 
 // ─── Speechmatics ─────────────────────────────────────────────────────────────
-export type SmConnectionState = 'idle' | 'connecting' | 'connected' | 'error' | 'disconnected'
+// 'reconnecting' = an unexpected drop is being retried (bounded, with backoff).
+// 'failed' = retries exhausted — transcription is down until the user acts
+// (distinct from 'error', which is a single Speechmatics-reported error that
+// may or may not lead to a reconnect attempt).
+export type SmConnectionState = 'idle' | 'connecting' | 'connected' | 'error' | 'disconnected' | 'reconnecting' | 'failed'
 
 // ─── Audio ────────────────────────────────────────────────────────────────────
 export type AudioSource = 'mic' | 'system' | 'both' | 'none'
