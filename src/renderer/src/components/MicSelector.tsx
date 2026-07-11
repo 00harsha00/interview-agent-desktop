@@ -1,6 +1,11 @@
 /**
  * MicSelector — audio input/output device selector dropdown
  * Clean, minimal design for selecting mic & speaker
+ *
+ * TODO: built but not yet wired into the live app — only referenced from
+ * INTEGRATION_EXAMPLES.tsx. useSystemAudio always captures the OS-default
+ * input device with no way to pick a non-default mic. Wire this into
+ * IdleScreen or the toolbar/settings popover when mic selection ships.
  */
 import React, { useState, useRef, useEffect } from 'react'
 import { cn } from '@/lib/utils'

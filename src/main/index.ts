@@ -175,6 +175,12 @@ async function verifyAuthToken(token: string): Promise<VerifyResult> {
 let mainWindow: BrowserWindow | null = null
 let pendingProtocolUrl: string | null = null
 let activeAuthToken: string | null = null  // token injected into outgoing requests
+// The session THIS device currently owns the active-device lock for (see
+// callSession.status.activate's deviceId enforcement) — set/cleared by the
+// renderer via IPC. Deliberately not "any session the renderer thinks is
+// running": if this device lost the lock to another device, it must NOT
+// end that other device's session on quit.
+let activeSessionId: string | null = null
 
 // ─── Settings popover: its own window ──────────────────────────────────────────
 // The popover used to render inside the main window (position:fixed portal),
@@ -371,6 +377,22 @@ function moveToSnap(pos: string): void {
 }
 
 // ─── Display change recovery ──────────────────────────────────────────────────
+const PILL_CLAMP_MARGIN = 8
+
+/** Clamps a position (for a rect of the given size) inside whichever
+ *  display it's nearest to — `screen.getDisplayMatching` returns the
+ *  closest display even for a point that's fully off-screen, so this both
+ *  handles "dragged slightly past the edge" and "restored from a position
+ *  on a display that no longer exists" the same way. */
+function clampToDisplay(x: number, y: number, w: number, h: number): { x: number; y: number } {
+  const display = screen.getDisplayMatching({ x, y, width: Math.max(1, w), height: Math.max(1, h) })
+  const wa = display.workArea
+  return {
+    x: Math.max(wa.x + PILL_CLAMP_MARGIN, Math.min(x, wa.x + wa.width - w - PILL_CLAMP_MARGIN)),
+    y: Math.max(wa.y + PILL_CLAMP_MARGIN, Math.min(y, wa.y + wa.height - h - PILL_CLAMP_MARGIN)),
+  }
+}
+
 function isRectOnAnyDisplay(bounds: Electron.Rectangle): boolean {
   return screen.getAllDisplays().some((d) => {
     const wa = d.workArea
@@ -825,10 +847,20 @@ function registerIPC(): void {
   ipcMain.handle('window:set-opacity', (_e, v: number) =>
     mainWindow?.setOpacity(Math.max(0.2, Math.min(1, v))))
 
-  // Custom window positioning (for floating MiniBar)
+  // Custom window positioning (for floating MiniBar) — clamped to whichever
+  // display the position is nearest, so the mini pill can never be dragged
+  // (or restored from a stale saved position, e.g. after a display was
+  // removed) fully or partially off-screen. Uses the window's OWN current
+  // size for the clamp, so this works whether it's currently the small pill
+  // or the full toolbar/overlay. Returns the clamped position so the
+  // renderer can keep whatever it persists (localStorage, for the pill) in
+  // sync instead of re-saving a stale off-screen value next launch.
   ipcMain.handle('window:set-position', (_e, x: number, y: number) => {
-    if (!mainWindow) return
-    mainWindow.setPosition(Math.round(x), Math.round(y), true)
+    if (!mainWindow) return { x: Math.round(x), y: Math.round(y) }
+    const { width, height } = mainWindow.getBounds()
+    const clamped = clampToDisplay(Math.round(x), Math.round(y), width, height)
+    mainWindow.setPosition(clamped.x, clamped.y, true)
+    return clamped
   })
 
   // Dynamic window sizing — renderer measures real content and calls this to fit it.
@@ -958,6 +990,11 @@ function registerIPC(): void {
   ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('app:platform', () => process.platform)
   ipcMain.handle('app:device-id', () => getDeviceId())
+
+  // Renderer's "Restart Now" button on the update-ready banner.
+  ipcMain.on('update:install', () => {
+    autoUpdater.quitAndInstall()
+  })
 
   // Desktop capturer sources (for system audio)
   ipcMain.handle('capture:get-sources', async () => {
@@ -1101,6 +1138,18 @@ function registerIPC(): void {
   ipcMain.handle('auth:clear', async () => {
     await clearAuthState()
     console.log('[main] Auth token cleared')
+  })
+
+  // ── Active-session tracking (for clean end-on-quit) ─────────────────────────
+  // The renderer is the source of truth for session lifecycle (it's the one
+  // making the tRPC activate/end calls) — these just mirror that state into
+  // main so before-quit can end the session synchronously instead of relying
+  // on the 90s server-side watchdog.
+  ipcMain.on('session:activated', (_e, sessionId: string) => {
+    activeSessionId = sessionId
+  })
+  ipcMain.on('session:ended', (_e, sessionId: string) => {
+    if (activeSessionId === sessionId) activeSessionId = null
   })
 }
 
@@ -1389,16 +1438,25 @@ app.whenReady().then(async () => {
   if (app.isPackaged) {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
+    // Logged once at startup so a real packaged build can be checked against
+    // the actual feed URL it resolved (electron-builder's publish config +
+    // the "private" flag together determine whether this needs a GH_TOKEN —
+    // see package.json's build.publish.private).
+    console.log('[updater] feed URL:', autoUpdater.getFeedURL())
     setTimeout(() => {
-      autoUpdater.checkForUpdatesAndNotify().catch((e) => console.error('[updater] check failed:', e?.message))
-    }, 5000)
+      autoUpdater.checkForUpdates().catch((e) => console.error('[updater] check failed:', e?.message))
+    }, 10_000)
     autoUpdater.on('update-available', (info) => {
       console.log('[updater] Update available:', info.version)
+      mainWindow?.webContents.send('update:available', { version: info.version, releaseDate: info.releaseDate })
     })
-    autoUpdater.on('update-downloaded', () => {
-      console.log('[updater] Downloaded — installs on quit')
+    autoUpdater.on('update-downloaded', (info) => {
+      console.log('[updater] Downloaded — ready to install:', info.version)
+      mainWindow?.webContents.send('update:ready', { version: info.version })
     })
     autoUpdater.on('error', (err) => {
+      // Silent to the user by design — a failed update check shouldn't
+      // interrupt an interview; it just tries again on next launch.
       console.error('[updater] Error:', err?.message)
     })
   }
@@ -1416,4 +1474,35 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   if (forcedLogoutInterval) clearInterval(forcedLogoutInterval)
+})
+
+// ── Clean session end on quit ──────────────────────────────────────────────
+// Ends the tRPC call directly (tRPC v11 wraps mutation input in {json:...})
+// with a short timeout — this must never hang app quit for long even if the
+// backend is unreachable.
+async function endSessionOnQuit(sessionId: string): Promise<void> {
+  if (!activeAuthToken) return
+  const body = JSON.stringify({ json: { id: sessionId } })
+  await httpFetch(
+    `${BACKEND_URL}/api/trpc/callSession.status.end`,
+    'POST',
+    body,
+    { 'Content-Type': 'application/json', Cookie: buildCookieHeader(activeAuthToken) },
+    3_000 // 3s max — don't block quit for long
+  )
+}
+
+// Ends the active session synchronously before the app actually exits,
+// instead of leaving it ACTIVE (and potentially still billing) for up to
+// the 90s server-side watchdog timeout. event.preventDefault() + app.exit()
+// (not app.quit()) — exit() terminates immediately without re-dispatching
+// lifecycle events, so there's no risk of this handler re-entering itself.
+app.on('before-quit', (event) => {
+  if (!activeSessionId) return
+  const sessionId = activeSessionId
+  activeSessionId = null
+  event.preventDefault()
+  endSessionOnQuit(sessionId)
+    .catch((err) => console.error('[quit] failed to end session:', err))
+    .finally(() => app.exit(0))
 })

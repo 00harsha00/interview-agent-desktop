@@ -150,6 +150,81 @@ export function AuthNoticeToast() {
   )
 }
 
+// ── Update banner — non-intrusive top banner for auto-update status.
+// "available" shows while electron-updater is downloading in the background
+// (autoDownload is on); "ready" offers Restart Now / Later once it's staged
+// and ready to install on next launch or quit.
+export function UpdateBanner() {
+  const [status, setStatus] = useState<'none' | 'available' | 'ready'>('none')
+  const [version, setVersion] = useState<string | null>(null)
+  const [dismissed, setDismissed] = useState(false)
+
+  useEffect(() => {
+    const u1 = window.electronAPI.on('update:available', (info: unknown) => {
+      setVersion((info as { version: string }).version)
+      setStatus('available')
+      setDismissed(false)
+    })
+    const u2 = window.electronAPI.on('update:ready', (info: unknown) => {
+      setVersion((info as { version: string }).version)
+      setStatus('ready')
+      setDismissed(false)
+    })
+    return () => { u1(); u2() }
+  }, [])
+
+  if (status === 'none' || dismissed) return null
+
+  return createPortal(
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 999998, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+      <div style={{
+        pointerEvents: 'auto',
+        marginTop: 6,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        background: 'rgba(20,20,30,0.96)',
+        border: '1px solid rgba(99,102,241,0.4)',
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 11.5,
+        fontWeight: 500,
+        padding: '6px 8px 6px 12px',
+        borderRadius: 999,
+      }}>
+        {status === 'available' ? (
+          <span>Update v{version} available — downloading…</span>
+        ) : (
+          <>
+            <span>Update v{version} ready — restart to install</span>
+            <button
+              onClick={() => window.electronAPI.installUpdate()}
+              style={{
+                background: 'linear-gradient(135deg,rgba(99,102,241,0.9),rgba(139,92,246,0.9))',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 999,
+                padding: '3px 10px',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Restart Now
+            </button>
+            <button
+              onClick={() => setDismissed(true)}
+              style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: 11, cursor: 'pointer', padding: '3px 4px' }}
+            >
+              Later
+            </button>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // ── Mini-bar shown when "hidden" ───────────────────────────────────────────
 // When a session is running (endsAt set), shows a pulsing red "recording/billing"
 // dot plus the live countdown so the user always knows credits are being spent.
@@ -176,13 +251,22 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
   }, [showTimer])
 
   useEffect(() => {
-    // Load saved position from localStorage (once, on entering mini mode)
+    // Load saved position from localStorage (once, on entering mini mode).
+    // Main clamps this to a valid display — sync back whatever it actually
+    // used (it may differ from the raw saved value, e.g. after a display
+    // was removed) so a subsequent drag doesn't jump from a stale base.
     const saved = localStorage.getItem('minibar-position')
     if (saved) {
       try {
         const pos = JSON.parse(saved)
         positionRef.current = pos
-        window.electronAPI.window.setPosition(pos.x, pos.y)
+        window.electronAPI.window.setPosition(pos.x, pos.y).then((clamped) => {
+          if (!clamped) return
+          positionRef.current = clamped
+          if (clamped.x !== pos.x || clamped.y !== pos.y) {
+            localStorage.setItem('minibar-position', JSON.stringify(clamped))
+          }
+        }).catch(() => {})
       } catch (e) {
         console.warn('Failed to restore minibar position:', e)
       }
@@ -211,8 +295,17 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
 
     const handleMouseUp = () => {
       setIsDragging(false)
-      // Save position to localStorage
-      localStorage.setItem('minibar-position', JSON.stringify(positionRef.current))
+      // One final authoritative setPosition call so whatever gets PERSISTED
+      // is always the clamped, on-screen value — intermediate drag events
+      // (fire-and-forget, see handleMouseMove) could otherwise leave
+      // positionRef holding a position past an edge that main silently
+      // clamped without the renderer's copy catching up.
+      window.electronAPI.window.setPosition(positionRef.current.x, positionRef.current.y)
+        .then((clamped) => { if (clamped) positionRef.current = clamped })
+        .catch(() => {})
+        .finally(() => {
+          localStorage.setItem('minibar-position', JSON.stringify(positionRef.current))
+        })
     }
 
     document.addEventListener('mousemove', handleMouseMove)

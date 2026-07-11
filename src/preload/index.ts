@@ -17,7 +17,7 @@ const electronAPI = {
     getWorkAreaSize: () => ipcRenderer.invoke('window:get-work-area') as Promise<{ width: number; height: number; appWidth: number }>,
     setIgnoreMouse: (v: boolean) => ipcRenderer.invoke('window:set-ignore-mouse', v),
     setContentProtection: (v: boolean) => ipcRenderer.invoke('window:set-content-protection', v),
-    setPosition:    (x: number, y: number) => ipcRenderer.invoke('window:set-position', x, y),
+    setPosition:    (x: number, y: number) => ipcRenderer.invoke('window:set-position', x, y) as Promise<{ x: number; y: number }>,
     moveTo:         (pos: string) => ipcRenderer.invoke('window:move-to', pos),
     getDisplays:    () => ipcRenderer.invoke('window:get-displays') as Promise<{
       displays: Array<{ id: number; label: string; bounds: Electron.Rectangle; isPrimary: boolean }>
@@ -44,6 +44,9 @@ const electronAPI = {
     deviceId: () => ipcRenderer.invoke('app:device-id') as Promise<string>,
   },
 
+  // Auto-update
+  installUpdate: () => ipcRenderer.send('update:install'),
+
   // Desktop capture sources (for system audio)
   capture: {
     getSources: () =>
@@ -62,6 +65,13 @@ const electronAPI = {
       ipcRenderer.invoke('auth:set-token', token) as Promise<{ success: boolean; error?: string }>,
     signin: (email: string, password: string) =>
       ipcRenderer.invoke('auth:signin', email, password) as Promise<{ success: boolean; error?: string }>,
+  },
+
+  // Mirrors active-session state into main so it can end the session
+  // synchronously on app quit instead of relying on the server watchdog.
+  session: {
+    notifyActivated: (sessionId: string) => ipcRenderer.send('session:activated', sessionId),
+    notifyEnded: (sessionId: string) => ipcRenderer.send('session:ended', sessionId),
   },
 
   // Listen for events from main process
@@ -85,6 +95,8 @@ const electronAPI = {
       'auth:force-logout',
       'display:moved-to-primary',
       'display:list-changed',
+      'update:available',
+      'update:ready',
     ])
     if (!ALLOWED.has(channel)) return () => {}
     const listener = (_: Electron.IpcRendererEvent, ...args: unknown[]) => fn(...args)

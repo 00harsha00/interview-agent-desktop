@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App, { FocusToast, AuthNoticeToast } from './App'
+import App, { FocusToast, AuthNoticeToast, UpdateBanner } from './App'
 import { SettingsPopoverWindow } from './components/SessionOverlay'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import './index.css'
@@ -18,7 +18,7 @@ const isPopoverView = view === 'popover'
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      {isPopoverView ? <SettingsPopoverWindow /> : <><App /><FocusToast /><AuthNoticeToast /></>}
+      {isPopoverView ? <SettingsPopoverWindow /> : <><App /><FocusToast /><AuthNoticeToast /><UpdateBanner /></>}
     </ErrorBoundary>
   </React.StrictMode>,
 )
