@@ -7,6 +7,7 @@ import electronUpdater from 'electron-updater'
 const { autoUpdater } = electronUpdater
 import { join } from 'path'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { randomUUID } from 'crypto'
 import * as http from 'http'
 import * as https from 'https'
 
@@ -60,7 +61,8 @@ function httpFetch(
   url: string,
   method: 'GET' | 'POST',
   body?: string,
-  extraHeaders: Record<string, string> = {}
+  extraHeaders: Record<string, string> = {},
+  timeoutMs?: number
 ): Promise<NodeHttpResponse> {
   return new Promise((resolve, reject) => {
     try {
@@ -98,6 +100,11 @@ function httpFetch(
         res.on('error', reject)
       })
       req.on('error', reject)
+      if (timeoutMs) {
+        req.setTimeout(timeoutMs, () => {
+          req.destroy(new Error(`Request timed out after ${timeoutMs}ms`))
+        })
+      }
       if (body) req.write(body)
       req.end()
     } catch (err) { reject(err) }
@@ -117,24 +124,50 @@ function buildCookieHeader(token: string): string {
   return SESSION_COOKIE_NAMES.map((name) => `${name}=${encodeURIComponent(token)}`).join('; ')
 }
 
-async function verifyAuthToken(token: string): Promise<{ ok: boolean; email?: string; error?: string }> {
+// Distinguishes "the backend explicitly rejected this token" (bad/expired/
+// forced-logout — safe to log the user out) from "we couldn't get a real
+// answer from the backend" (network/DNS/timeout/5xx — NEVER safe to treat as
+// a logout, since it says nothing about whether the token is actually valid).
+type VerifyResult =
+  | { valid: true; email: string }
+  | { valid: false; reason: 'rejected'; error: string }
+  | { valid: false; reason: 'unreachable'; error: string }
+
+const AUTH_CHECK_TIMEOUT_MS = 5000
+
+async function verifyAuthToken(token: string): Promise<VerifyResult> {
   try {
     const res = await httpFetch(
       `${BACKEND_URL}/api/auth/session`,
       'GET',
       undefined,
-      { Cookie: buildCookieHeader(token) }
+      { Cookie: buildCookieHeader(token) },
+      AUTH_CHECK_TIMEOUT_MS
     )
+    // NextAuth's /api/auth/session route returns 200 with no `user` field for
+    // an invalid/expired token — it does NOT 401. A non-2xx here means the
+    // backend itself failed to answer (crash, proxy error, etc.), not that
+    // the token is bad, so it must never be treated as a rejection.
     if (!res.ok) {
-      return { ok: false, error: `Auth check failed (${res.status})` }
+      return { valid: false, reason: 'unreachable', error: `Auth check failed (${res.status})` }
     }
-    const data = JSON.parse(res.body || '{}') as { user?: { email?: string } }
+    let data: { user?: { email?: string; forcedLogout?: boolean } }
+    try {
+      data = JSON.parse(res.body || '{}')
+    } catch {
+      return { valid: false, reason: 'unreachable', error: 'Malformed auth response from server' }
+    }
     if (!data.user?.email) {
-      return { ok: false, error: 'Server did not recognize this desktop session.' }
+      return { valid: false, reason: 'rejected', error: 'Server did not recognize this desktop session.' }
     }
-    return { ok: true, email: data.user.email }
+    if (data.user.forcedLogout) {
+      return { valid: false, reason: 'rejected', error: 'Signed out on another device.' }
+    }
+    return { valid: true, email: data.user.email }
   } catch (err) {
-    return { ok: false, error: (err as Error).message }
+    // Network error, DNS failure, or our own timeout — we genuinely don't
+    // know whether the token is valid, so never clear auth state for this.
+    return { valid: false, reason: 'unreachable', error: (err as Error).message }
   }
 }
 
@@ -598,10 +631,17 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
       if (token) {
         await setAuthCookies(token)
         const verified = await verifyAuthToken(token)
-        if (verified.ok) saveToken(token)
-        else {
+        if (verified.valid) {
+          saveToken(token)
+        } else if (verified.reason === 'rejected') {
           await clearAuthState()
-          console.warn('[main] Auth deep link token did not verify:', verified.error)
+          console.warn('[main] Auth deep link token was rejected:', verified.error)
+        } else {
+          // Couldn't reach the backend to verify — keep the token we just
+          // set rather than logging the user out over a transient blip.
+          saveToken(token)
+          console.warn('[main] Could not verify auth deep link token (offline?) — keeping session:', verified.error)
+          mainWindow?.webContents.send('auth:verify-warning', verified.error)
         }
       } else {
         console.warn('[main] Auth deep link received but no valid token was found in payload:', data)
@@ -618,10 +658,15 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
       if (token && token !== activeAuthToken) {
         await setAuthCookies(token)
         const verified = await verifyAuthToken(token)
-        if (verified.ok) saveToken(token)
-        else {
+        if (verified.valid) {
+          saveToken(token)
+        } else if (verified.reason === 'rejected') {
           await clearAuthState()
-          console.warn('[main] Session deep link token did not verify:', verified.error)
+          console.warn('[main] Session deep link token was rejected:', verified.error)
+        } else {
+          saveToken(token)
+          console.warn('[main] Could not verify session deep link token (offline?) — keeping session:', verified.error)
+          mainWindow?.webContents.send('auth:verify-warning', verified.error)
         }
       }
       if (mainWindow) {
@@ -816,6 +861,7 @@ function registerIPC(): void {
   // App info
   ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('app:platform', () => process.platform)
+  ipcMain.handle('app:device-id', () => getDeviceId())
 
   // Desktop capturer sources (for system audio)
   ipcMain.handle('capture:get-sources', async () => {
@@ -840,13 +886,20 @@ function registerIPC(): void {
     try {
       await setAuthCookies(token.trim())
       const verified = await verifyAuthToken(token.trim())
-      if (!verified.ok) {
-        await clearAuthState()
-        return { success: false, error: verified.error ?? 'Desktop session was rejected by the server' }
+      if (verified.valid) {
+        saveToken(token.trim())
+        console.log('[main] Auth token accepted for', verified.email)
+        return { success: true }
       }
-      saveToken(token.trim())
-      console.log('[main] Auth token accepted for', verified.email)
-      return { success: true }
+      if (verified.reason === 'rejected') {
+        await clearAuthState()
+        return { success: false, error: verified.error }
+      }
+      // Unreachable — don't wipe any existing session; just report failure.
+      return {
+        success: false,
+        error: `Could not verify with the server right now (${verified.error}). Check your connection and try again.`,
+      }
     } catch (err) {
       return { success: false, error: (err as Error).message }
     }
@@ -907,16 +960,19 @@ function registerIPC(): void {
       if (token) {
         await setAuthCookies(token)
         const verified = await verifyAuthToken(token)
-        if (!verified.ok) {
-          await clearAuthState()
-          return {
-            success: false,
-            error: verified.error ?? 'Signed in, but the desktop session could not be verified.',
-          }
+        if (verified.valid) {
+          saveToken(token)
+          console.log('[main] In-app sign-in successful for', verified.email)
+          return { success: true }
         }
-        saveToken(token)
-        console.log('[main] In-app sign-in successful for', verified.email)
-        return { success: true }
+        if (verified.reason === 'rejected') {
+          await clearAuthState()
+          return { success: false, error: verified.error }
+        }
+        return {
+          success: false,
+          error: 'Signed in, but could not verify with the server right now. Check your connection and try again.',
+        }
       }
 
       // Parse error from response body
@@ -1160,6 +1216,52 @@ function loadToken(): string | null {
   try { return readFileSync(tokenPath(), 'utf8').trim() || null } catch { return null }
 }
 
+// ─── Device identity (single-device session lock) ────────────────────────────
+// A stable, persisted-per-install id — NOT tied to hardware — so the backend
+// can tell "this is the same desktop install re-activating" apart from "a
+// second, different install (or a stale/stolen lock) is trying to take over".
+function deviceIdPath(): string {
+  const dir = join(app.getPath('userData'), 'parakeet')
+  try { mkdirSync(dir, { recursive: true }) } catch { /* exists */ }
+  return join(dir, 'device-id')
+}
+let cachedDeviceId: string | null = null
+function getDeviceId(): string {
+  if (cachedDeviceId) return cachedDeviceId
+  try {
+    const existing = readFileSync(deviceIdPath(), 'utf8').trim()
+    if (existing) { cachedDeviceId = existing; return existing }
+  } catch { /* not created yet */ }
+  const id = randomUUID()
+  try { writeFileSync(deviceIdPath(), id, 'utf8') } catch { /* ignore */ }
+  cachedDeviceId = id
+  return id
+}
+
+// ─── Forced-logout polling ────────────────────────────────────────────────────
+// Catches "signed out on another device" (or any other server-side session
+// revocation) while the app is idle/backgrounded, not just on the next API
+// call that happens to fail. Reuses verifyAuthToken's unreachable/rejected
+// distinction — a network blip here must never log the user out.
+let forcedLogoutInterval: ReturnType<typeof setInterval> | null = null
+const FORCED_LOGOUT_POLL_MS = 60_000
+
+function startForcedLogoutPolling(): void {
+  if (forcedLogoutInterval) return
+  forcedLogoutInterval = setInterval(async () => {
+    if (!activeAuthToken) return
+    try {
+      const verified = await verifyAuthToken(activeAuthToken)
+      if (!verified.valid && verified.reason === 'rejected') {
+        console.warn('[main] Session invalidated remotely:', verified.error)
+        await clearAuthState()
+        mainWindow?.webContents.send('auth:force-logout', verified.error)
+      }
+      // 'unreachable' → ignore; never log out over a network blip.
+    } catch { /* ignore */ }
+  }, FORCED_LOGOUT_POLL_MS)
+}
+
 app.whenReady().then(async () => {
   if (HIDE_DOCK_ICON) void app.dock?.hide()
   appWidth = computeAppWidth()
@@ -1176,6 +1278,7 @@ app.whenReady().then(async () => {
   createWindow()
   createPopoverWindow()   // pre-created hidden so it shows instantly on first hamburger click
   registerShortcuts()
+  startForcedLogoutPolling()
 
   // ── Auto-update (packaged builds only) ──────────────────────────────────────
   if (app.isPackaged) {
@@ -1207,4 +1310,5 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
+  if (forcedLogoutInterval) clearInterval(forcedLogoutInterval)
 })

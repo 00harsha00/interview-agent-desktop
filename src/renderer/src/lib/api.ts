@@ -58,6 +58,13 @@ function trpcMutation<T>(procedure: string, input: unknown): Promise<T> {
   }).then((r) => r.result.data.json)
 }
 
+// ─── Device identity (single-device session lock) ──────────────────────────
+let cachedDeviceId: string | null = null
+async function getDeviceId(): Promise<string> {
+  if (!cachedDeviceId) cachedDeviceId = await window.electronAPI.app.deviceId()
+  return cachedDeviceId
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 export async function getAuthSession(): Promise<AuthUser | null> {
   try {
@@ -88,12 +95,27 @@ export async function getSession(id: string): Promise<CallSession | null> {
 export async function updateSessionStatus(
   id: string,
   status: 'ACTIVE' | 'ENDED',
+  opts?: { forceTakeOver?: boolean },
 ): Promise<void> {
   // callSession.status is a nested router: .activate or .end
   if (status === 'ACTIVE') {
-    await trpcMutation('callSession.status.activate', { id })
+    const deviceId = await getDeviceId()
+    await trpcMutation('callSession.status.activate', { id, deviceId, forceTakeOver: opts?.forceTakeOver })
   } else {
     await trpcMutation('callSession.status.end', { id })
+  }
+}
+
+/** Refreshes this device's claim on the session's active-device lock. Called
+ *  periodically while a session is running — if another device has since
+ *  taken over, `ok` comes back false so the caller can stop itself. */
+export async function heartbeatSession(id: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const deviceId = await getDeviceId()
+    return await trpcMutation<{ ok: boolean; error?: string }>('callSession.heartbeat', { id, deviceId })
+  } catch {
+    // Network hiccup — never treat this as losing the lock.
+    return { ok: true }
   }
 }
 
@@ -210,7 +232,7 @@ export function streamAIAnswer(
   extraContext?: string,
   isRegenerate?: boolean,
 ): void {
-  fetch(`${BACKEND_URL}/api/chat`, {
+  void getDeviceId().then((deviceId) => fetch(`${BACKEND_URL}/api/chat`, {
     method: 'POST',
     credentials: 'omit',    // cookie injected by main process; avoids null-origin CORS block
     headers: { 'Content-Type': 'application/json' },
@@ -220,6 +242,7 @@ export function streamAIAnswer(
       ...(images?.length ? { images } : {}),
       ...(extraContext?.trim() ? { extraContext: extraContext.trim() } : {}),
       ...(isRegenerate ? { isRegenerate: true } : {}),
+      deviceId,
     }),
     signal,
   })
@@ -270,5 +293,5 @@ export function streamAIAnswer(
     })
     .catch((err: Error) => {
       if (err.name !== 'AbortError') onError(err.message)
-    })
+    }))
 }

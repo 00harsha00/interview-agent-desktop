@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 import { SESSION_PING_MS, TRANSCRIPT_SAVE_MS, SILENCE_TRIGGER_MS, AI_MODEL_LABELS } from '@/config'
 import {
   getSpeechmaticsJwt, updateSessionStatus, saveTranscriptions, pingSession, extendSession,
-  updateSessionModel,
+  updateSessionModel, heartbeatSession,
 } from '@/lib/api'
 import { FRONTEND_URL } from '@/config'
 import { useSpeechmatics } from '@/hooks/useSpeechmatics'
@@ -721,10 +721,11 @@ function OverlayLogo() {
 
 // ─── Activation Modal ─────────────────────────────────────────────────────────
 function ActivationModal({
-  session, onActivate, onBack, error, activating, onHide,
+  session, onActivate, onBack, error, activating, onHide, locked, onTakeOver,
 }: {
   session: CallSession; onActivate: () => void; onBack: () => void
   error: string | null; activating: boolean; onHide: () => void
+  locked?: boolean; onTakeOver?: () => void
 }) {
   const isFree = session.mode === 'FREE'
   const companyInitial = session.companyName?.[0]?.toUpperCase() ?? 'I'
@@ -846,13 +847,15 @@ function ActivationModal({
             Cancel
           </button>
           <button
-            onClick={onActivate}
+            onClick={locked ? onTakeOver : onActivate}
             disabled={activating}
             className="flex-1 py-2.5 rounded-xl text-white text-[12.5px] font-semibold transition-all flex items-center justify-center gap-2 disabled:opacity-40"
             style={{
               background: activating
                 ? 'rgba(34,197,94,0.3)'
-                : 'linear-gradient(135deg,rgba(34,197,94,0.8),rgba(16,185,129,0.8))',
+                : locked
+                  ? 'linear-gradient(135deg,rgba(245,158,11,0.85),rgba(217,119,6,0.85))'
+                  : 'linear-gradient(135deg,rgba(34,197,94,0.8),rgba(16,185,129,0.8))',
               boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.15)',
             }}
           >
@@ -863,6 +866,13 @@ function ActivationModal({
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
                 Starting session…
+              </>
+            ) : locked ? (
+              <>
+                <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                </svg>
+                Take Over Session
               </>
             ) : (
               <>
@@ -901,6 +911,7 @@ export function SessionOverlay({
   const [isActivated,  setIsActivated]  = useState(false)
   const [activating,   setActivating]   = useState(false)
   const [activateErr,  setActivateErr]  = useState<string | null>(null)
+  const [sessionLocked, setSessionLocked] = useState(false)
 
   const [isRunning,    setIsRunning]    = useState(false)
   const [timerStartSeconds, setTimerStartSeconds] = useState<number | null>(null)
@@ -1001,6 +1012,7 @@ export function SessionOverlay({
   const questionBufRef = useRef<string[]>([])
   const partialRef     = useRef('')
   const pingRef        = useRef<ReturnType<typeof setInterval> | null>(null)
+  const deviceHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const inputRef       = useRef<HTMLInputElement>(null)
   const pendingQRef    = useRef('')
   const prevHeightRef  = useRef(TOOLBAR_H)
@@ -1149,11 +1161,32 @@ export function SessionOverlay({
     questionBufRef.current = []
   }, [])
 
+  // ── Device-lock heartbeat ────────────────────────────────────────────────
+  // Refreshes this device's claim on the session every 15s while it's
+  // running. If another device takes over (heartbeat comes back LOCK_LOST),
+  // this device stops itself rather than keep sending audio/chat against a
+  // session it no longer owns.
+  const DEVICE_HEARTBEAT_MS = 15_000
+  const startDeviceHeartbeat = useCallback(() => {
+    if (deviceHeartbeatRef.current) clearInterval(deviceHeartbeatRef.current)
+    deviceHeartbeatRef.current = setInterval(async () => {
+      const res = await heartbeatSession(session.id)
+      if (!res.ok && res.error === 'LOCK_LOST') {
+        if (deviceHeartbeatRef.current) { clearInterval(deviceHeartbeatRef.current); deviceHeartbeatRef.current = null }
+        if (pingRef.current) { clearInterval(pingRef.current); pingRef.current = null }
+        sm.disconnect(); audio.stop(); ai.abort()
+        isRunningRef.current = false; setIsRunning(false)
+        setError('This session was taken over by another device.')
+        if (!hiddenRef.current) window.electronAPI.window.setHeight(MODAL_H)
+      }
+    }, DEVICE_HEARTBEAT_MS)
+  }, [session.id, sm, audio, ai])
+
   // ── Activate ──────────────────────────────────────────────────────────────
-  const handleActivate = useCallback(async () => {
-    setActivating(true); setActivateErr(null)
+  const handleActivate = useCallback(async (forceTakeOver = false) => {
+    setActivating(true); setActivateErr(null); setSessionLocked(false)
     try {
-      await updateSessionStatus(session.id, 'ACTIVE')
+      await updateSessionStatus(session.id, 'ACTIVE', { forceTakeOver })
       const jwt = await getSpeechmaticsJwt(session.id)
       sm.connect(jwt)
       await audio.start(audioSrc)
@@ -1165,12 +1198,19 @@ export function SessionOverlay({
       setTimerKey((k) => k + 1)
 
       pingRef.current  = setInterval(() => pingSession(session.id), SESSION_PING_MS)
+      startDeviceHeartbeat()
       setIsActivated(true)
       window.electronAPI.window.setHeight(TOOLBAR_H)
     } catch (err) {
-      setActivateErr(`Activation failed: ${(err as Error).message}`)
+      const msg = (err as Error).message
+      if (msg.includes('SESSION_LOCKED')) {
+        setSessionLocked(true)
+        setActivateErr('This session is already active on another device.')
+      } else {
+        setActivateErr(`Activation failed: ${msg}`)
+      }
     } finally { setActivating(false) }
-  }, [session.id, audioSrc, sm, audio])
+  }, [session.id, session.mode, isAdmin, audioSrc, sm, audio, startDeviceHeartbeat])
 
   // Restart audio when mic/sys toggles change while running
   const prevAudioSrc = useRef(audioSrc)
@@ -1192,6 +1232,7 @@ export function SessionOverlay({
   const endSession = useCallback(async () => {
     if (silenceRef.current) clearTimeout(silenceRef.current)
     if (pingRef.current)    clearInterval(pingRef.current)
+    if (deviceHeartbeatRef.current) clearInterval(deviceHeartbeatRef.current)
     sm.disconnect(); audio.stop(); ai.abort()
     isRunningRef.current = false; setIsRunning(false)
     const remaining = saveQueueRef.current.splice(0)
@@ -1208,6 +1249,7 @@ export function SessionOverlay({
 
     if (session.mode === 'FREE') {
       if (pingRef.current) clearInterval(pingRef.current)
+      if (deviceHeartbeatRef.current) clearInterval(deviceHeartbeatRef.current)
       sm.disconnect(); audio.stop(); ai.abort()
       isRunningRef.current = false; setIsRunning(false)
       void updateSessionStatus(session.id, 'ENDED').catch(() => {})
@@ -1227,6 +1269,7 @@ export function SessionOverlay({
         })
         .catch(() => {
           if (pingRef.current) clearInterval(pingRef.current)
+          if (deviceHeartbeatRef.current) clearInterval(deviceHeartbeatRef.current)
           sm.disconnect(); audio.stop(); ai.abort()
           isRunningRef.current = false; setIsRunning(false)
           void updateSessionStatus(session.id, 'ENDED').catch(() => {})
@@ -1367,6 +1410,7 @@ export function SessionOverlay({
   useEffect(() => () => {
     sm.disconnect(); audio.stop(); ai.abort()
     if (pingRef.current) clearInterval(pingRef.current)
+    if (deviceHeartbeatRef.current) clearInterval(deviceHeartbeatRef.current)
   }, []) // eslint-disable-line
 
   // ── Auto-fit window height to real rendered content ──────────────────────────
@@ -1545,8 +1589,9 @@ export function SessionOverlay({
   if (!isActivated) {
     return (
       <ActivationModal
-        session={session} onActivate={handleActivate} onBack={onEnd}
+        session={session} onActivate={() => handleActivate(false)} onBack={onEnd}
         error={activateErr} activating={activating} onHide={() => onHide(MODAL_H)}
+        locked={sessionLocked} onTakeOver={() => handleActivate(true)}
       />
     )
   }

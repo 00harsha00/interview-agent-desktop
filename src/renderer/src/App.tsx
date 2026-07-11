@@ -99,6 +99,54 @@ export function FocusToast() {
   )
 }
 
+// ── Auth notice toast — "couldn't verify, working offline" / "signed out
+// elsewhere" acknowledgments. Mounted as an always-present sibling of <App/>
+// (see main.tsx), same reasoning as FocusToast: App has several early-return
+// branches and this needs to show regardless of which one is active.
+export function AuthNoticeToast() {
+  const [message, setMessage] = useState<string | null>(null)
+  useEffect(() => {
+    let hideTimer: ReturnType<typeof setTimeout> | undefined
+    const show = (text: string, durationMs: number) => {
+      setMessage(text)
+      clearTimeout(hideTimer)
+      hideTimer = setTimeout(() => setMessage(null), durationMs)
+    }
+    const u1 = window.electronAPI.on('auth:verify-warning', () => {
+      show("Couldn't verify with the server — working offline", 4_000)
+    })
+    const u2 = window.electronAPI.on('auth:force-logout', () => {
+      show("You've been signed out on another device", 5_000)
+    })
+    return () => { u1(); u2(); clearTimeout(hideTimer) }
+  }, [])
+
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        top: 10,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: 'rgba(20,20,30,0.92)',
+        border: '1px solid rgba(245,158,11,0.4)',
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 11.5,
+        fontWeight: 500,
+        padding: '5px 12px',
+        borderRadius: 999,
+        pointerEvents: 'none',
+        zIndex: 999999,
+        opacity: message ? 1 : 0,
+        transition: 'opacity 0.3s ease',
+      }}
+    >
+      {message}
+    </div>,
+    document.body,
+  )
+}
+
 // ── Mini-bar shown when "hidden" ───────────────────────────────────────────
 // When a session is running (endsAt set), shows a pulsing red "recording/billing"
 // dot plus the live countdown so the user always knows credits are being spent.
@@ -308,6 +356,18 @@ export default function App() {
     setView('idle')
     setSessionMeta({ running: false, endsAt: null })
   }, [])
+
+  // Server revoked this token (e.g. user signed out on the website) — reset
+  // straight to idle/unauthenticated. If a session was active, SessionOverlay
+  // is unmounted by this state change; its own unmount cleanup effect still
+  // tears down audio/Speechmatics/AI, so nothing is left running silently.
+  useEffect(() => {
+    return window.electronAPI.on('auth:force-logout', () => {
+      handleSessionEnd()
+      setMiniMode(false)
+      void refetch()
+    })
+  }, [handleSessionEnd, refetch])
 
   const inSession = authState === 'authenticated' && view === 'session' && !!activeSession
 

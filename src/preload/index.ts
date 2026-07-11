@@ -41,6 +41,7 @@ const electronAPI = {
   app: {
     version:  () => ipcRenderer.invoke('app:version') as Promise<string>,
     platform: () => ipcRenderer.invoke('app:platform') as Promise<NodeJS.Platform>,
+    deviceId: () => ipcRenderer.invoke('app:device-id') as Promise<string>,
   },
 
   // Desktop capture sources (for system audio)
@@ -80,6 +81,8 @@ const electronAPI = {
       'window:snap-feedback',
       'shortcut:restore-from-mini',
       'shortcut:app-focused',
+      'auth:verify-warning',
+      'auth:force-logout',
     ])
     if (!ALLOWED.has(channel)) return () => {}
     const listener = (_: Electron.IpcRendererEvent, ...args: unknown[]) => fn(...args)
