@@ -2486,6 +2486,28 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             <span style={{ fontSize: 11, color: '#fde68a', fontWeight: 600 }}>⚠</span>
           </Tooltip>
         )}
+        {/* MODEL LABEL — click opens settings */}
+        {(() => {
+          const modelInfo = MODELS.find((m) => m.id === p.aiModel)
+          const isFree = modelInfo?.free ?? false
+          const label = AI_MODEL_LABELS[p.aiModel] ?? p.aiModel
+          return (
+            <Tooltip text={`Model: ${label}`} flipped={flipped}>
+              <button
+                onClick={(e) => p.onSettingsClick(e.currentTarget.getBoundingClientRect())}
+                style={{
+                  padding: '2px 6px', borderRadius: 5,
+                  fontSize: 10, fontWeight: 500, flexShrink: 0,
+                  color: isFree ? '#22c55e' : 'rgba(255,255,255,0.4)',
+                  background: isFree ? 'rgba(34,197,94,0.08)' : 'transparent',
+                  border: isFree ? '1px solid rgba(34,197,94,0.2)' : '1px solid transparent',
+                }}
+              >
+                {label}{isFree && <span style={{ marginLeft: 3, fontSize: 9 }}>FREE</span>}
+              </button>
+            </Tooltip>
+          )
+        })()}
         <Sep />
         {/* 10. POSITION GRID */}
         <Tooltip text="Move window ⌘⇧↑↓←→" flipped={flipped}>
