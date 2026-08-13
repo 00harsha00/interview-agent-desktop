@@ -243,6 +243,7 @@ export function streamAIAnswer(
       deviceId,
     }
     console.log('[api] streamAIAnswer URL:', url)
+    console.log('[api] streamAIAnswer callSessionId:', callSessionId)
     console.log('[api] streamAIAnswer payload:', JSON.stringify(payload).slice(0, 500))
     console.log('[api] base URL:', BACKEND_URL)
     return fetch(url, {
@@ -254,6 +255,7 @@ export function streamAIAnswer(
   })
     .then(async (res) => {
       console.log('[api] streamAIAnswer response:', res.status, res.statusText)
+      console.log('[api] response headers:', Object.fromEntries(res.headers.entries()))
       if (!res.ok) {
         const body = await res.text().catch(() => res.statusText)
         let msg = body
@@ -264,15 +266,17 @@ export function streamAIAnswer(
       }
 
       const reader = res.body?.getReader()
-      if (!reader) { onError('No response body'); return }
+      if (!reader) { console.error('[api] No response body — res.body is null'); onError('No response body'); return }
+      console.log('[api] SSE stream reader obtained, starting pump')
 
       const decoder = new TextDecoder()
       let buf = ''
+      let chunkCount = 0
 
       const pump = async (): Promise<void> => {
         try {
           const { done, value } = await reader.read()
-          if (done) { onDone(); return }
+          if (done) { console.log('[api] SSE stream done, total chunks:', chunkCount); onDone(); return }
 
           buf += decoder.decode(value, { stream: true })
           const lines = buf.split('\n')
@@ -282,18 +286,37 @@ export function streamAIAnswer(
             const trimmed = line.trim()
             if (!trimmed.startsWith('data:')) continue
             const data = trimmed.slice(5).trim()
-            if (data === '[DONE]') { onDone(); return }
+            if (data === '[DONE]') { console.log('[api] SSE [DONE], total chunks:', chunkCount); onDone(); return }
             if (!data) continue
             try {
-              const chunk = JSON.parse(data) as string | { error?: string }
-              if (typeof chunk === 'string') onChunk(chunk)
-              else if (chunk.error) onError(chunk.error)
-            } catch {}
+              const chunk = JSON.parse(data) as unknown
+              if (chunkCount === 0) console.log('[api] first SSE chunk:', JSON.stringify(chunk).slice(0, 200))
+              chunkCount++
+              if (typeof chunk === 'string') {
+                onChunk(chunk)
+              } else if (chunk && typeof chunk === 'object') {
+                const obj = chunk as Record<string, unknown>
+                if (obj.error) { onError(String(obj.error)); return }
+                // Handle {type:"text", text:"..."} format from backend
+                if (typeof obj.text === 'string') { onChunk(obj.text); continue }
+                // Handle {content:"..."} format
+                if (typeof obj.content === 'string') { onChunk(obj.content); continue }
+                // Handle {choices:[{delta:{content:"..."}}]} OpenAI-style format
+                const choices = obj.choices as Array<{ delta?: { content?: string } }> | undefined
+                if (choices?.[0]?.delta?.content) { onChunk(choices[0].delta.content); continue }
+                console.warn('[api] unhandled SSE object shape:', JSON.stringify(chunk).slice(0, 300))
+              }
+            } catch (parseErr) {
+              console.warn('[api] SSE JSON parse failed for:', data.slice(0, 200), parseErr)
+            }
           }
 
           return pump()
         } catch (err) {
-          if ((err as Error).name !== 'AbortError') onError((err as Error).message)
+          if ((err as Error).name !== 'AbortError') {
+            console.error('[api] SSE pump error:', (err as Error).message)
+            onError((err as Error).message)
+          }
         }
       }
 

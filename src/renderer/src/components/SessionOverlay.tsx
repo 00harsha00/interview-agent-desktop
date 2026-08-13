@@ -1186,6 +1186,8 @@ export function SessionOverlay({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audio, audioSrc])
 
+  console.log('[session] active session:', { id: session.id, status: session.status, mode: session.mode, aiModel: session.aiModel })
+
   const ai = useAIStream({
     callSessionId: session.id,
     extraContext,

@@ -783,7 +783,11 @@ async function setAuthCookies(token: string): Promise<void> {
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: [`${BACKEND_URL}/*`, `${FRONTEND_URL}/*`] },
     (details, callback) => {
-      if (!activeAuthToken) { callback({ requestHeaders: details.requestHeaders }); return }
+      if (!activeAuthToken) {
+        console.log('[main] intercepting request (no auth token):', details.url.slice(0, 100))
+        callback({ requestHeaders: details.requestHeaders }); return
+      }
+      console.log('[main] intercepting request, injecting cookie:', details.url.slice(0, 100))
       const headers = { ...details.requestHeaders }
       const existing = headers['Cookie'] ?? headers['cookie'] ?? ''
       // Replace or append the session cookie — strip any prior value under

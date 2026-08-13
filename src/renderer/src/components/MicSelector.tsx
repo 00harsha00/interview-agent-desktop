@@ -23,8 +23,14 @@ export function MicSelector({
 }: MicSelectorProps) {
   const [open, setOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
+  const closedAtRef = useRef(0)
 
   const toggle = useCallback(() => {
+    // Same trackpad fix as hamburger: blur fires before click, closing the
+    // window, then click sees open=false and reopens it. Guard with a
+    // grace period so a click within 300ms of the close is treated as the
+    // closing click, not a new open.
+    if (Date.now() - closedAtRef.current < 300) return
     if (!open) {
       const rect = btnRef.current?.getBoundingClientRect()
       if (rect) {
@@ -48,9 +54,11 @@ export function MicSelector({
   useEffect(() => {
     const unsub1 = window.electronAPI.on('mic:device-selected', (deviceId: unknown) => {
       onInputChange?.(deviceId as string)
+      closedAtRef.current = Date.now()
       setOpen(false)
     })
     const unsub2 = window.electronAPI.on('mic:selector-closed', () => {
+      closedAtRef.current = Date.now()
       setOpen(false)
     })
     return () => { unsub1(); unsub2() }
