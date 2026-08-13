@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.0.0 — MVP Release (August 2026)
+
+### AI & Models
+- Added 4 free NVIDIA NIM models: Llama 3.3 70B, Qwen 2.5 Coder, Nemotron 49B, Llama 3.1 8B
+- Fixed AI answer generation (SSE streaming rebuilt for Electron's Chromium)
+- Smart context memory for long sessions (summary + recent window)
+- Improved interview persona system prompt
+
+### Design
+- New app logo everywhere (toolbar, mini pill, dock, app icon)
+- Transparent mini pill — logo + countdown timer floating on desktop (no background)
+- Quick model switcher from toolbar badge (focused popup)
+- Compact hamburger menu with model dropdown (optgroups for paid/free)
+- Tooltips on all toolbar buttons
+- Semi-transparent overlay (65% opacity default)
+
+### Reliability
+- Network-safe auth — no logout on wifi blip
+- Single-device session enforcement with heartbeat
+- Speechmatics auto-reconnect with fresh JWT on disconnect
+- External display disconnect recovery (moves to primary screen)
+- Screenshot captures correct monitor (not always primary)
+- Audio device change handling while recording
+
+### Infrastructure
+- Migrated backend from Railway to Fly.io
+- NVIDIA NIM integration via OpenAI-compatible API
+- Database indexes for scale
+- Token budget management (100k context for NVIDIA models)
+
 ## v1.1.0 — 2026-07-06
 
 ### New Features
