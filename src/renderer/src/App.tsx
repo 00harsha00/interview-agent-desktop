@@ -8,7 +8,8 @@ import { useAuth }        from '@/hooks/useAuth'
 import { getSession }     from '@/lib/api'
 import { AuthGate }       from '@/components/AuthGate'
 import { IdleScreen }     from '@/components/IdleScreen'
-import { SessionOverlay, WaveformBars } from '@/components/SessionOverlay'
+import logoSrc from './assets/logo.png'
+import { SessionOverlay } from '@/components/SessionOverlay'
 import type { CallSession, SessionProtocolPayload } from '@/types'
 
 // Mouse-passthrough: transparent areas stay click-through
@@ -268,7 +269,7 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
       } as React.CSSProperties}
     >
       <span className="relative flex items-center flex-shrink-0">
-        <WaveformBars active={active} />
+        <img src={logoSrc} style={{ width: 20, height: 20, borderRadius: 5, objectFit: 'contain' }} />
         {showTimer && (
           <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
         )}

@@ -16,6 +16,7 @@ import React, {
 } from 'react'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
+import logoSrc from '../assets/logo.png'
 import { cn } from '@/lib/utils'
 import { SESSION_PING_MS, TRANSCRIPT_SAVE_MS, SILENCE_TRIGGER_MS, AI_MODEL_LABELS, MODELS } from '@/config'
 import {
@@ -431,56 +432,28 @@ function SettingsPanel({
           <Toggle checked={autoGen} onChange={() => onAutoGen(!autoGen)} />
         </div>
 
-        {/* Model — rich inline list with FREE badges and bestFor descriptions */}
-        <div className="flex flex-col gap-1 py-1.5" style={rowDivider}>
-          <span className="text-[12px] text-white/35 mb-0.5">Model</span>
-          <div style={{ maxHeight: 200, overflowY: 'auto', scrollbarWidth: 'none' }}>
-            {MODELS.map((m, i) => {
-              const isPaidSection = !m.free
-              const prevFree = i > 0 && MODELS[i - 1].free
-              const firstFree = m.free && !prevFree
-              return (
-                <React.Fragment key={m.id}>
-                  {firstFree && (
-                    <div className="flex items-center gap-2 my-1">
-                      <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Free Models</span>
-                      <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-                    </div>
-                  )}
-                  <button
-                    onClick={() => onModelChange(m.id as AIModel)}
-                    className="w-full flex items-center gap-1.5 rounded-lg transition-all"
-                    style={{
-                      padding: '4px 6px',
-                      background: aiModel === m.id ? 'rgba(99,102,241,0.15)' : 'transparent',
-                      boxShadow: aiModel === m.id ? 'inset 0 0 0 1px rgba(99,102,241,0.3)' : 'none',
-                    }}
-                    onMouseOver={(e) => { if (aiModel !== m.id) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
-                    onMouseOut={(e) => { if (aiModel !== m.id) e.currentTarget.style.background = 'transparent' }}
-                  >
-                    <span style={{ width: 12, flexShrink: 0, color: 'rgba(99,102,241,0.9)', fontSize: 11 }}>
-                      {aiModel === m.id ? '✓' : ''}
-                    </span>
-                    <span style={{ fontSize: 13, color: '#ffffff', flex: 1, textAlign: 'left' }}>{m.name}</span>
-                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontStyle: 'italic', flexShrink: 0 }}>
-                      {m.bestFor}
-                    </span>
-                    {m.free && (
-                      <span style={{
-                        fontSize: 10, fontWeight: 500,
-                        padding: '1px 6px', borderRadius: 4,
-                        background: 'rgba(34,197,94,0.15)',
-                        border: '1px solid rgba(34,197,94,0.3)',
-                        color: '#22c55e',
-                        flexShrink: 0,
-                      }}>FREE</span>
-                    )}
-                  </button>
-                </React.Fragment>
-              )
-            })}
-          </div>
+        {/* Model — compact dropdown */}
+        <div className="flex items-center justify-between py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35 flex-shrink-0 w-14">Model</span>
+          <select
+            value={aiModel}
+            onChange={(e) => onModelChange(e.target.value as AIModel)}
+            style={{
+              flex: 1, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 6, color: '#fff', fontSize: 12, padding: '4px 6px', cursor: 'pointer',
+            }}
+          >
+            <optgroup label="Paid Models" style={{ background: '#12121e' }}>
+              {MODELS.filter((m) => !m.free).map((m) => (
+                <option key={m.id} value={m.id} style={{ background: '#12121e' }}>{m.name}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Free Models (NVIDIA)" style={{ background: '#12121e' }}>
+              {MODELS.filter((m) => m.free).map((m) => (
+                <option key={m.id} value={m.id} style={{ background: '#12121e' }}>{m.name} — FREE</option>
+              ))}
+            </optgroup>
+          </select>
         </div>
 
         {/* Text Size — controls the answer/transcript/chat reading text size,
@@ -585,6 +558,7 @@ interface PopoverSettings {
   zoom: number; opacity: number; autoGen: boolean; autoDetect: boolean
   privateMode: boolean; language: string
   extraContext: string; aiModel: AIModel; snapPos: SnapPos; fontSize: number
+  _mode?: 'settings' | 'model-picker'
 }
 const DEFAULT_POPOVER_SETTINGS: PopoverSettings = {
   zoom: 1, opacity: 0.65, autoGen: true, autoDetect: true, privateMode: false,
@@ -625,53 +599,95 @@ export function SettingsPopoverWindow() {
   const send = (type: string, payload?: unknown) => window.electronAPI.popover.sendAction({ type, payload })
   const close = () => window.electronAPI.popover.hide()
 
+  const handleModelChange = (m: AIModel) => { patch({ aiModel: m }); send('model', m); close() }
+
   return (
     <div
       ref={rootRef}
       style={{
         background: 'transparent',
         borderRadius: 12,
-        // overflowY:auto (not overflow:hidden) — normally never kicks in,
-        // since main sizes the actual OS window to fit this content exactly
-        // (see positionPopoverWindow). It's a safety net for the one case
-        // that can't be avoided: a screen too short/cramped to fit the full
-        // menu even at the edge margins, where main clamps the window
-        // height below the content's natural size — without this, that
-        // excess would be silently invisible with no way to reach it at all.
         overflowY: 'auto',
         overflowX: 'hidden',
         scrollbarWidth: 'none',
         boxShadow: '0 8px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1)',
       }}
     >
-      <SettingsPanel
-        userEmail={settings.userEmail}
-        zoom={settings.zoom} opacity={settings.opacity} autoGen={settings.autoGen} autoDetect={settings.autoDetect}
-        privateMode={settings.privateMode} language={settings.language}
-        extraContext={settings.extraContext} aiModel={settings.aiModel} snapPos={settings.snapPos}
-        fontSize={settings.fontSize}
-        onZoom={(d) => {
-          patch({ zoom: Math.max(0.7, Math.min(1.5, +((settings.zoom + d).toFixed(1)))) })
-          send('zoom', d)
-        }}
-        onZoomReset={() => { patch({ zoom: 1 }); send('zoomReset') }}
-        onOpacity={(d) => {
-          patch({ opacity: Math.max(0.3, Math.min(1, +((settings.opacity + d).toFixed(1)))) })
-          send('opacity', d)
-        }}
-        onOpacityReset={() => { patch({ opacity: 1 }); send('opacityReset') }}
-        onAutoGen={(v) => { patch({ autoGen: v }); send('autoGen', v) }}
-        onAutoDetect={(v) => { patch({ autoDetect: v }); send('autoDetect', v) }}
-        onPrivate={(v) => { patch({ privateMode: v }); send('private', v) }}
-        onLanguage={(v) => { patch({ language: v }); send('language', v) }}
-        onExtraContext={(v) => { patch({ extraContext: v }); send('extraContext', v) }}
-        onModelChange={(m) => { patch({ aiModel: m }); send('model', m); close() }}
-        onFontSize={(size) => { patch({ fontSize: size }); send('SET_FONT_SIZE', size) }}
-        onMove={(p) => { patch({ snapPos: p }); send('move', p); close() }}
-        onExit={() => { send('exit'); close() }}
-        onEnd={() => { send('end'); close() }}
-        onClose={close}
-      />
+      {settings._mode === 'model-picker' ? (
+        <ModelPickerContent aiModel={settings.aiModel} onModelChange={handleModelChange} onClose={close} />
+      ) : (
+        <SettingsPanel
+          userEmail={settings.userEmail}
+          zoom={settings.zoom} opacity={settings.opacity} autoGen={settings.autoGen} autoDetect={settings.autoDetect}
+          privateMode={settings.privateMode} language={settings.language}
+          extraContext={settings.extraContext} aiModel={settings.aiModel} snapPos={settings.snapPos}
+          fontSize={settings.fontSize}
+          onZoom={(d) => {
+            patch({ zoom: Math.max(0.7, Math.min(1.5, +((settings.zoom + d).toFixed(1)))) })
+            send('zoom', d)
+          }}
+          onZoomReset={() => { patch({ zoom: 1 }); send('zoomReset') }}
+          onOpacity={(d) => {
+            patch({ opacity: Math.max(0.3, Math.min(1, +((settings.opacity + d).toFixed(1)))) })
+            send('opacity', d)
+          }}
+          onOpacityReset={() => { patch({ opacity: 1 }); send('opacityReset') }}
+          onAutoGen={(v) => { patch({ autoGen: v }); send('autoGen', v) }}
+          onAutoDetect={(v) => { patch({ autoDetect: v }); send('autoDetect', v) }}
+          onPrivate={(v) => { patch({ privateMode: v }); send('private', v) }}
+          onLanguage={(v) => { patch({ language: v }); send('language', v) }}
+          onExtraContext={(v) => { patch({ extraContext: v }); send('extraContext', v) }}
+          onModelChange={handleModelChange}
+          onFontSize={(size) => { patch({ fontSize: size }); send('SET_FONT_SIZE', size) }}
+          onMove={(p) => { patch({ snapPos: p }); send('move', p); close() }}
+          onExit={() => { send('exit'); close() }}
+          onEnd={() => { send('end'); close() }}
+          onClose={close}
+        />
+      )}
+    </div>
+  )
+}
+
+function ModelPickerContent({ aiModel, onModelChange, onClose }: { aiModel: AIModel; onModelChange: (m: AIModel) => void; onClose: () => void }) {
+  const paidModels = MODELS.filter((m) => !m.free)
+  const freeModels = MODELS.filter((m) => m.free)
+  const rowStyle = (selected: boolean): React.CSSProperties => ({
+    width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+    padding: '6px 10px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+    background: selected ? 'rgba(99,102,241,0.15)' : 'transparent',
+    boxShadow: selected ? 'inset 0 0 0 1px rgba(99,102,241,0.3)' : 'none',
+    border: 'none', color: 'inherit',
+  })
+
+  const renderGroup = (models: typeof MODELS) =>
+    models.map((m) => (
+      <button key={m.id} onClick={() => onModelChange(m.id as AIModel)} style={rowStyle(aiModel === m.id)}
+        onMouseOver={(e) => { if (aiModel !== m.id) (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.05)' }}
+        onMouseOut={(e) => { if (aiModel !== m.id) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+      >
+        <span style={{ width: 12, flexShrink: 0, color: 'rgba(99,102,241,0.9)', fontSize: 11 }}>{aiModel === m.id ? '✓' : ''}</span>
+        <span style={{ fontSize: 13, color: '#fff', flex: 1 }}>{m.name}</span>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontStyle: 'italic', flexShrink: 0 }}>{m.bestFor}</span>
+        {m.free && (
+          <span style={{ fontSize: 10, fontWeight: 500, padding: '1px 6px', borderRadius: 4, background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#22c55e', flexShrink: 0 }}>FREE</span>
+        )}
+      </button>
+    ))
+
+  return (
+    <div style={{ background: 'rgba(14,14,20,0.96)', borderRadius: 12, padding: '10px 6px', minWidth: 260 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px 6px', borderBottom: '1px solid rgba(255,255,255,0.07)', marginBottom: 6 }}>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontWeight: 500, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Select Model</span>
+        <button onClick={onClose} style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>✕</button>
+      </div>
+      {renderGroup(paidModels)}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '6px 0 4px' }}>
+        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Free Models</span>
+        <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+      </div>
+      {renderGroup(freeModels)}
     </div>
   )
 }
@@ -1499,11 +1515,27 @@ export function SessionOverlay({
     showSettingsRef.current = opening
     setShowSettings(opening)
     if (opening) {
-      window.electronAPI.popover.updateSettings(settingsSnapshotRef.current)
+      window.electronAPI.popover.updateSettings({ ...settingsSnapshotRef.current, _mode: 'settings' })
       window.electronAPI.popover.show({
         x: r.left, y: r.top, width: r.width, height: r.height, flipped,
       }).catch((err) => {
         console.error('[hamburger] popover show failed:', err)
+      })
+    } else {
+      window.electronAPI.popover.hide()
+    }
+  }, [flipped])
+  const onModelPickerClick = useCallback((r: DOMRect) => {
+    if (Date.now() - popoverClosedAtRef.current < 300) return
+    const opening = !showSettingsRef.current
+    showSettingsRef.current = opening
+    setShowSettings(opening)
+    if (opening) {
+      window.electronAPI.popover.updateSettings({ ...settingsSnapshotRef.current, _mode: 'model-picker' })
+      window.electronAPI.popover.show({
+        x: r.left, y: r.top, width: r.width, height: r.height, flipped,
+      }).catch((err) => {
+        console.error('[model-picker] popover show failed:', err)
       })
     } else {
       window.electronAPI.popover.hide()
@@ -1833,6 +1865,7 @@ export function SessionOverlay({
         onScreenshot={captureScreenshot}
         onToggleChat={onToggleChat}
         onSettingsClick={onSettingsClick}
+        onModelPickerClick={onModelPickerClick}
         onHide={onHideMini}
         aiModel={aiModel}
         snapPos={snapPos}
@@ -2299,7 +2332,7 @@ interface ToolbarBarProps {
   onTimerExpire: () => void; isStreaming: boolean
   onToggleMic: () => void; onToggleSys: () => void
   onAnswer: () => void; onScreenshot: (sendNow?: boolean) => void
-  onToggleChat: () => void; onSettingsClick: (r: DOMRect) => void
+  onToggleChat: () => void; onSettingsClick: (r: DOMRect) => void; onModelPickerClick: (r: DOMRect) => void
   onHide: () => void
   aiModel: AIModel
   snapPos: SnapPos; onSnapMove: (p: SnapPos) => void; flashPos?: SnapPos | null
@@ -2341,12 +2374,10 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
         }}
       >
         {/* ── LEFT GROUP: controls ── */}
-        {/* 1. WAVEFORM */}
-        <Tooltip text="Session active" flipped={flipped}>
-          <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center' }}>
-            <WaveformBars active={audioActive} />
-          </div>
-        </Tooltip>
+        {/* 1. LOGO */}
+        <div style={{ padding: '2px 4px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+          <img src={logoSrc} style={{ width: 24, height: 24, borderRadius: 6, objectFit: 'contain' }} />
+        </div>
         <Sep />
         {/* 2. MIC TOGGLE */}
         <Tooltip text={p.micOn ? 'Microphone · on' : 'Microphone · off'} flipped={flipped}>
@@ -2486,15 +2517,15 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             <span style={{ fontSize: 11, color: '#fde68a', fontWeight: 600 }}>⚠</span>
           </Tooltip>
         )}
-        {/* MODEL LABEL — click opens settings */}
+        {/* MODEL LABEL — click opens focused model picker */}
         {(() => {
           const modelInfo = MODELS.find((m) => m.id === p.aiModel)
           const isFree = modelInfo?.free ?? false
           const label = AI_MODEL_LABELS[p.aiModel] ?? p.aiModel
           return (
-            <Tooltip text={`Model: ${label}`} flipped={flipped}>
+            <Tooltip text="Switch model" flipped={flipped}>
               <button
-                onClick={(e) => p.onSettingsClick(e.currentTarget.getBoundingClientRect())}
+                onClick={(e) => p.onModelPickerClick(e.currentTarget.getBoundingClientRect())}
                 style={{
                   padding: '2px 6px', borderRadius: 5,
                   fontSize: 10, fontWeight: 500, flexShrink: 0,
