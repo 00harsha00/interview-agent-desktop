@@ -245,31 +245,39 @@ export function streamAIAnswer(
     console.log('[api] streamAIAnswer URL:', url)
     console.log('[api] streamAIAnswer callSessionId:', callSessionId)
     console.log('[api] streamAIAnswer payload:', JSON.stringify(payload).slice(0, 500))
-    console.log('[api] base URL:', BACKEND_URL)
+
     return fetch(url, {
-    method: 'POST',
-    credentials: 'omit',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  })
+      method: 'POST',
+      credentials: 'omit',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+      },
+      body: JSON.stringify(payload),
+      signal,
+    })
     .then(async (res) => {
       console.log('[api] streamAIAnswer response:', res.status, res.statusText)
-      console.log('[api] response headers:', Object.fromEntries(res.headers.entries()))
+      console.log('[api] response content-type:', res.headers.get('content-type'))
       if (!res.ok) {
         const body = await res.text().catch(() => res.statusText)
         let msg = body
         try { msg = (JSON.parse(body) as { error?: string }).error ?? body } catch {}
-        console.error('[api] streamAIAnswer error body:', body)
+        console.error('[api] streamAIAnswer error:', res.status, body)
         onError(msg)
         return
       }
 
-      const reader = res.body?.getReader()
-      if (!reader) { console.error('[api] No response body — res.body is null'); onError('No response body'); return }
-      console.log('[api] SSE stream reader obtained, starting pump')
+      if (!res.body) { console.error('[api] res.body is null'); onError('No response body'); return }
 
-      const decoder = new TextDecoder()
+      // TextDecoderStream for Electron compatibility — avoids issues with
+      // manual TextDecoder + Uint8Array buffering in Electron's Chromium.
+      const reader = res.body
+        .pipeThrough(new TextDecoderStream())
+        .getReader()
+
+      console.log('[api] SSE stream reader obtained via TextDecoderStream')
       let buf = ''
       let chunkCount = 0
 
@@ -278,7 +286,7 @@ export function streamAIAnswer(
           const { done, value } = await reader.read()
           if (done) { console.log('[api] SSE stream done, total chunks:', chunkCount); onDone(); return }
 
-          buf += decoder.decode(value, { stream: true })
+          buf += value
           const lines = buf.split('\n')
           buf = lines.pop() ?? ''
 
@@ -297,17 +305,14 @@ export function streamAIAnswer(
               } else if (chunk && typeof chunk === 'object') {
                 const obj = chunk as Record<string, unknown>
                 if (obj.error) { onError(String(obj.error)); return }
-                // Handle {type:"text", text:"..."} format from backend
                 if (typeof obj.text === 'string') { onChunk(obj.text); continue }
-                // Handle {content:"..."} format
                 if (typeof obj.content === 'string') { onChunk(obj.content); continue }
-                // Handle {choices:[{delta:{content:"..."}}]} OpenAI-style format
                 const choices = obj.choices as Array<{ delta?: { content?: string } }> | undefined
                 if (choices?.[0]?.delta?.content) { onChunk(choices[0].delta.content); continue }
-                console.warn('[api] unhandled SSE object shape:', JSON.stringify(chunk).slice(0, 300))
+                console.warn('[api] unhandled SSE chunk shape:', JSON.stringify(chunk).slice(0, 300))
               }
-            } catch (parseErr) {
-              console.warn('[api] SSE JSON parse failed for:', data.slice(0, 200), parseErr)
+            } catch {
+              console.warn('[api] SSE JSON parse failed:', data.slice(0, 200))
             }
           }
 

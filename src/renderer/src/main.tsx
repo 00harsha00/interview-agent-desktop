@@ -7,6 +7,18 @@ import { MicSelectorView } from './components/MicSelectorView'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import './index.css'
 
+// Electron's setDisplayMediaRequestHandler can throw a TypeError ("Video was
+// requested, but no video stream was provided") in its internal plumbing —
+// this bypasses the renderer's try/catch around getDisplayMedia and surfaces
+// as an unhandled rejection. Suppress it here; the application-level catch
+// already handles the fallback (e.g. switching to mic-only).
+window.addEventListener('unhandledrejection', (e) => {
+  if (e.reason instanceof TypeError && /video.*stream/i.test(e.reason.message)) {
+    console.warn('[main.tsx] Suppressed Electron video stream TypeError:', e.reason.message)
+    e.preventDefault()
+  }
+})
+
 // Separate BrowserWindows (popover, tooltip) load this SAME bundle with a
 // ?view= query parameter. Branching here — before <App/> and its hooks ever
 // mount — keeps those windows from doing any pointless work.

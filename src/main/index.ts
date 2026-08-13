@@ -703,11 +703,21 @@ function createWindow(): void {
     desktopCapturer
       .getSources({ types: ['screen'] })
       .then((sources) => {
-        if (sources.length === 0) { callback({}); return }
-        // 'loopback' = system audio on macOS; 'loopbackWithMute' on Windows
+        if (sources.length === 0) {
+          console.warn('[main] No screen sources — denying getDisplayMedia')
+          // Providing empty streams when video was requested causes a
+          // TypeError. Providing the first source even as a fallback is
+          // safer than an empty object — but with zero sources we can only
+          // deny. The renderer's try/catch handles the resulting rejection.
+          callback({} as Electron.Streams)
+          return
+        }
         callback({ video: pickSourceForCurrentDisplay(sources), audio: 'loopback' as 'loopback' })
       })
-      .catch(() => callback({}))
+      .catch((err) => {
+        console.warn('[main] desktopCapturer.getSources failed:', err)
+        callback({} as Electron.Streams)
+      })
   })
 
   // ── Load renderer ────────────────────────────────────────────────────────────
@@ -988,6 +998,15 @@ function registerIPC(): void {
       responseHeaders['Access-Control-Allow-Origin'] = ['*']
       responseHeaders['Access-Control-Allow-Methods'] = ['GET,POST,PUT,DELETE,OPTIONS']
       responseHeaders['Access-Control-Allow-Headers'] = ['*']
+
+      // SSE streaming: preserve streaming headers and disable buffering so
+      // Electron's network layer doesn't hold the response body.
+      const isSSE = details.url.includes('/api/chat')
+      if (isSSE) {
+        responseHeaders['Cache-Control'] = ['no-cache']
+        responseHeaders['X-Accel-Buffering'] = ['no']
+      }
+
       callback({ responseHeaders })
     }
   )
