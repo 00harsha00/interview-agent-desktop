@@ -31,6 +31,8 @@ const FRONTEND_URL: string =
 // NextAuth uses secure cookies on HTTPS: the session cookie is named
 // "__Secure-next-auth.session-token" in production (https backend) but plain
 // "next-auth.session-token" in dev (http). Pick the right name accordingly.
+console.log('[main] BACKEND_URL:', BACKEND_URL)
+console.log('[main] FRONTEND_URL:', FRONTEND_URL)
 const IS_HTTPS_BACKEND = BACKEND_URL.startsWith('https://')
 const SESSION_COOKIE_NAMES = ['__Secure-next-auth.session-token', 'next-auth.session-token'] as const
 const TOOLBAR_H  = 48   // toolbar-only height
@@ -605,18 +607,22 @@ async function setAuthCookies(token: string): Promise<void> {
     expirationDate: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
   }
   await Promise.all(
-    [BACKEND_URL, FRONTEND_URL].flatMap((url) =>
-      SESSION_COOKIE_NAMES.map((name) =>
+    [BACKEND_URL, FRONTEND_URL].flatMap((url) => {
+      const isHttps = url.startsWith('https://')
+      const names = isHttps
+        ? SESSION_COOKIE_NAMES
+        : SESSION_COOKIE_NAMES.filter((n) => !n.startsWith('__Secure-'))
+      return names.map((name) =>
         session.defaultSession.cookies
           .set({
             url,
             name,
             ...cookieBase,
-            secure: name.startsWith('__Secure-') || IS_HTTPS_BACKEND,
+            secure: isHttps,
           })
           .catch((e) => console.warn(`[main] Cookie set failed for ${url} (${name}):`, e))
       )
-    )
+    })
   )
   await session.defaultSession.cookies.flushStore().catch(() => {})
 
