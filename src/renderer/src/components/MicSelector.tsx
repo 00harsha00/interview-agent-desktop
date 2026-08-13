@@ -1,11 +1,11 @@
 /**
- * MicSelector — audio input device selector dropdown.
- * Wired into SessionOverlay's toolbar, next to the mic toggle (only the
- * input side is used there — outputDevices/onOutputChange are unused props,
- * kept for callers that want a speaker picker too).
+ * MicSelector — custom styled dropdown for audio input device selection.
+ * Uses ReactDOM.createPortal to render into document.body so the dropdown
+ * is never clipped by parent overflow. Opens upward at bottom snap positions,
+ * downward at top snap positions.
  */
-import React, { useState, useRef, useEffect } from 'react'
-import { cn } from '@/lib/utils'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface AudioDevice {
   id: string
@@ -15,133 +15,141 @@ export interface AudioDevice {
 
 interface MicSelectorProps {
   selectedInputId?: string
-  selectedOutputId?: string
   inputDevices?: AudioDevice[]
-  outputDevices?: AudioDevice[]
   onInputChange?: (deviceId: string) => void
-  onOutputChange?: (deviceId: string) => void
   compact?: boolean
+  flipped?: boolean
 }
 
 export function MicSelector({
   selectedInputId,
-  selectedOutputId,
   inputDevices = [],
-  outputDevices = [],
   onInputChange,
-  onOutputChange,
   compact = true,
+  flipped = false,
 }: MicSelectorProps) {
-  const [openMenu, setOpenMenu] = useState<'input' | 'output' | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, direction: 'down' as 'up' | 'down' })
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  const updatePosition = useCallback(() => {
+    const rect = btnRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const direction = flipped ? 'up' : 'down'
+    setDropdownPos({
+      top: direction === 'down' ? rect.bottom + 4 : rect.top - 4,
+      left: rect.left + rect.width / 2,
+      direction,
+    })
+  }, [flipped])
+
+  const toggle = useCallback(() => {
+    if (!open) updatePosition()
+    setOpen(v => !v)
+  }, [open, updatePosition])
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpenMenu(null)
-      }
+    if (!open) return
+    const handleClick = (e: MouseEvent) => {
+      if (btnRef.current?.contains(e.target as Node)) return
+      setOpen(false)
     }
-    if (openMenu) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [openMenu])
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
 
-  const selectedInput = inputDevices.find(d => d.id === selectedInputId)
-  const selectedOutput = outputDevices.find(d => d.id === selectedOutputId)
-
-  if (!inputDevices.length && !outputDevices.length) {
-    return <div className="text-[10px] text-white/30">No devices</div>
-  }
+  if (!inputDevices.length) return null
 
   return (
-    <div ref={menuRef} className="relative">
-      <div className="flex items-center gap-1.5">
-        {/* Input device selector */}
-        {inputDevices.length > 0 && (
-          <button
-            onClick={() => setOpenMenu(openMenu === 'input' ? null : 'input')}
-            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md hover:bg-white/5 transition-colors"
-            title="Select input device"
-          >
-            <svg className="h-3.5 w-3.5 text-white/50" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-            </svg>
-            {!compact && selectedInput && (
-              <span className="text-[10px] text-white/60 max-w-[80px] truncate">{selectedInput.label}</span>
-            )}
-          </button>
-        )}
-
-        {/* Output device selector */}
-        {outputDevices.length > 0 && (
-          <button
-            onClick={() => setOpenMenu(openMenu === 'output' ? null : 'output')}
-            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md hover:bg-white/5 transition-colors"
-            title="Select output device"
-          >
-            <svg className="h-3.5 w-3.5 text-white/50" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-            </svg>
-            {!compact && selectedOutput && (
-              <span className="text-[10px] text-white/60 max-w-[80px] truncate">{selectedOutput.label}</span>
-            )}
-          </button>
-        )}
-      </div>
-
-      {/* Dropdown menu */}
-      {openMenu && (
-        <div className="absolute top-8 left-0 z-50 min-w-max animate-fade-in">
-          <div className="overlay-card p-1 shadow-lg">
-            {openMenu === 'input' && inputDevices.length > 0 && (
-              <div className="space-y-0.5">
-                <div className="px-2 py-1 text-[10px] text-white/40 font-semibold">Microphone</div>
-                {inputDevices.map(device => (
-                  <button
-                    key={device.id}
-                    onClick={() => {
-                      onInputChange?.(device.id)
-                      setOpenMenu(null)
-                    }}
-                    className={cn(
-                      'w-full text-left px-3 py-1.5 text-[11px] rounded-md transition-all',
-                      selectedInputId === device.id
-                        ? 'bg-indigo-500/20 text-indigo-300'
-                        : 'text-white/60 hover:bg-white/5 hover:text-white/80'
-                    )}
-                  >
+    <>
+      <button
+        ref={btnRef}
+        onClick={toggle}
+        className="flex items-center justify-center transition-all"
+        style={{
+          padding: '4px 5px', borderRadius: 6,
+          color: 'rgba(255,255,255,0.5)',
+        }}
+        onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+        onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.5)' }}
+      >
+        <svg style={{ width: 10, height: 10 }} fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+        </svg>
+      </button>
+      {open && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: dropdownPos.direction === 'down' ? dropdownPos.top : undefined,
+            bottom: dropdownPos.direction === 'up' ? window.innerHeight - dropdownPos.top : undefined,
+            left: dropdownPos.left,
+            transform: 'translateX(-50%)',
+            zIndex: 99999,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div style={{
+            background: 'rgba(10,10,14,0.97)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 10,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)',
+            padding: '6px 0',
+            minWidth: 180,
+            maxWidth: 280,
+          }}>
+            <div style={{
+              padding: '4px 14px 6px',
+              fontSize: 10,
+              fontWeight: 600,
+              color: 'rgba(255,255,255,0.35)',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+            }}>
+              Microphone
+            </div>
+            {inputDevices.map(device => {
+              const isSelected = selectedInputId === device.id
+              return (
+                <button
+                  key={device.id}
+                  onClick={() => {
+                    onInputChange?.(device.id)
+                    setOpen(false)
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '8px 14px',
+                    fontSize: 12,
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.12s',
+                    background: isSelected ? 'rgba(99,102,241,0.25)' : 'transparent',
+                    color: isSelected ? '#fff' : 'rgba(255,255,255,0.8)',
+                  }}
+                  onMouseOver={(e) => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.07)' }}
+                  onMouseOut={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent' }}
+                >
+                  {isSelected && (
+                    <svg style={{ width: 14, height: 14, flexShrink: 0 }} fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                  {!isSelected && <span style={{ width: 14, flexShrink: 0 }} />}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {device.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {openMenu === 'output' && outputDevices.length > 0 && (
-              <div className="space-y-0.5">
-                <div className="px-2 py-1 text-[10px] text-white/40 font-semibold">Speaker</div>
-                {outputDevices.map(device => (
-                  <button
-                    key={device.id}
-                    onClick={() => {
-                      onOutputChange?.(device.id)
-                      setOpenMenu(null)
-                    }}
-                    className={cn(
-                      'w-full text-left px-3 py-1.5 text-[11px] rounded-md transition-all',
-                      selectedOutputId === device.id
-                        ? 'bg-indigo-500/20 text-indigo-300'
-                        : 'text-white/60 hover:bg-white/5 hover:text-white/80'
-                    )}
-                  >
-                    {device.label}
-                  </button>
-                ))}
-              </div>
-            )}
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }

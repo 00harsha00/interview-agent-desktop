@@ -232,25 +232,33 @@ export function streamAIAnswer(
   extraContext?: string,
   isRegenerate?: boolean,
 ): void {
-  void getDeviceId().then((deviceId) => fetch(`${BACKEND_URL}/api/chat`, {
-    method: 'POST',
-    credentials: 'omit',    // cookie injected by main process; avoids null-origin CORS block
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  void getDeviceId().then((deviceId) => {
+    const url = `${BACKEND_URL}/api/chat`
+    const payload = {
       callSessionId,
       question,
       ...(images?.length ? { images } : {}),
       ...(extraContext?.trim() ? { extraContext: extraContext.trim() } : {}),
       ...(isRegenerate ? { isRegenerate: true } : {}),
       deviceId,
-    }),
+    }
+    console.log('[api] streamAIAnswer URL:', url)
+    console.log('[api] streamAIAnswer payload:', JSON.stringify(payload).slice(0, 500))
+    console.log('[api] base URL:', BACKEND_URL)
+    return fetch(url, {
+    method: 'POST',
+    credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
     signal,
   })
     .then(async (res) => {
+      console.log('[api] streamAIAnswer response:', res.status, res.statusText)
       if (!res.ok) {
         const body = await res.text().catch(() => res.statusText)
         let msg = body
         try { msg = (JSON.parse(body) as { error?: string }).error ?? body } catch {}
+        console.error('[api] streamAIAnswer error body:', body)
         onError(msg)
         return
       }
@@ -292,6 +300,8 @@ export function streamAIAnswer(
       return pump()
     })
     .catch((err: Error) => {
+      console.error('[api] streamAIAnswer fetch error:', err.message)
       if (err.name !== 'AbortError') onError(err.message)
-    }))
+    })
+  })
 }

@@ -1195,21 +1195,48 @@ function registerShortcuts(): void {
     }
   })
 
-  // Snap-position shortcuts — same underlying logic as clicking a position in
-  // the toolbar's mini grid (moveToSnap). Also flashes the corresponding
-  // button on the renderer's grid, since a keyboard shortcut (unlike a click)
-  // otherwise gives no visible acknowledgment that it did something.
+  // Snap-position shortcuts — smart neighbor-based movement.
+  // Each arrow key moves to the neighbor in that direction from the current
+  // snap position. If no neighbor exists in that direction, do nothing.
+  const SNAP_NEIGHBORS: Record<string, string[]> = {
+    'top-left':      ['top-center', 'bottom-left'],
+    'top-center':    ['top-left', 'top-right', 'bottom-center'],
+    'top-right':     ['top-center', 'bottom-right'],
+    'bottom-left':   ['top-left', 'bottom-center'],
+    'bottom-center': ['bottom-left', 'bottom-right', 'top-center'],
+    'bottom-right':  ['top-right', 'bottom-center'],
+  }
+  // Direction → target lookup from current position
+  const SNAP_DIRECTION: Record<string, Record<string, string | undefined>> = {
+    left: {
+      'top-center': 'top-left', 'top-right': 'top-center',
+      'bottom-center': 'bottom-left', 'bottom-right': 'bottom-center',
+    },
+    right: {
+      'top-left': 'top-center', 'top-center': 'top-right',
+      'bottom-left': 'bottom-center', 'bottom-center': 'bottom-right',
+    },
+    up: {
+      'bottom-left': 'top-left', 'bottom-center': 'top-center', 'bottom-right': 'top-right',
+    },
+    down: {
+      'top-left': 'bottom-left', 'top-center': 'bottom-center', 'top-right': 'bottom-right',
+    },
+  }
   const snapShortcuts: Array<[string, string]> = [
-    ['CommandOrControl+Shift+Up',    'top-center'],
-    ['CommandOrControl+Shift+Down',  'bottom-center'],
-    ['CommandOrControl+Shift+Left',  'top-left'],
-    ['CommandOrControl+Shift+Right', 'top-right'],
+    ['CommandOrControl+Shift+Up',    'up'],
+    ['CommandOrControl+Shift+Down',  'down'],
+    ['CommandOrControl+Shift+Left',  'left'],
+    ['CommandOrControl+Shift+Right', 'right'],
   ]
-  snapShortcuts.forEach(([accelerator, pos]) => {
+  snapShortcuts.forEach(([accelerator, direction]) => {
     try {
       const ok = globalShortcut.register(accelerator, () => {
-        moveToSnap(pos)
-        mainWindow?.webContents.send('window:snap-feedback', pos)
+        const current = loadSnapPos()
+        const target = SNAP_DIRECTION[direction]?.[current]
+        if (!target) return
+        moveToSnap(target)
+        mainWindow?.webContents.send('window:snap-feedback', target)
       })
       if (!ok) console.warn(`[main] Could not register shortcut: ${accelerator}`)
     } catch (err) {

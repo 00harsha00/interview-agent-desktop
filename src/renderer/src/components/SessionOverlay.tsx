@@ -150,10 +150,12 @@ function Dot({ color = 'red' }: { color?: 'red' | 'green' }) {
 }
 
 /** Portal-based tooltip — rendered into document.body so it's never clipped by
- *  parent overflow or the Electron window bounds. */
-function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+ *  parent overflow or the Electron window bounds.
+ *  flipped=true (bottom snap positions) → tooltip opens ABOVE the element.
+ *  flipped=false (top snap positions) → tooltip opens BELOW the element. */
+function Tooltip({ text, children, flipped = false }: { text: string; children: React.ReactNode; flipped?: boolean }) {
   const [visible, setVisible] = useState(false)
-  const [pos, setPos] = useState({ top: 0, left: 0 })
+  const [pos, setPos] = useState({ top: 0, bottom: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
   return (
     <div
@@ -161,7 +163,11 @@ function Tooltip({ text, children }: { text: string; children: React.ReactNode }
       onMouseEnter={() => {
         const rect = ref.current?.getBoundingClientRect()
         if (rect) {
-          setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 })
+          setPos({
+            top: rect.bottom + 8,
+            bottom: window.innerHeight - rect.top + 8,
+            left: rect.left + rect.width / 2,
+          })
           setVisible(true)
         }
       }}
@@ -172,9 +178,11 @@ function Tooltip({ text, children }: { text: string; children: React.ReactNode }
       {visible && createPortal(
         <div style={{
           position: 'fixed',
-          top: pos.top,
+          ...(flipped
+            ? { bottom: pos.bottom, transform: 'translate(-50%, 0)' }
+            : { top: pos.top, transform: 'translate(-50%, 0)' }
+          ),
           left: pos.left,
-          transform: 'translate(-50%, -100%)',
           background: 'rgba(10,10,14,0.97)',
           border: '1px solid rgba(255,255,255,0.1)',
           borderRadius: 7,
@@ -2289,6 +2297,7 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
   const isMicActive = p.isRunning && p.micOn
   const isSysActive = p.isRunning && p.sysOn
   const audioActive = p.isRunning && (p.sysOn || p.micOn)
+  const flipped = p.snapPos.startsWith('bottom')
 
   // Status dot color
   let statusLabel: string; let statusDotColor: string
@@ -2318,15 +2327,16 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           flexShrink: 0,
         }}
       >
+        {/* ── LEFT GROUP: controls ── */}
         {/* 1. WAVEFORM */}
-        <Tooltip text="Session active">
+        <Tooltip text="Session active" flipped={flipped}>
           <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center' }}>
             <WaveformBars active={audioActive} />
           </div>
         </Tooltip>
         <Sep />
-        {/* 3. MIC (before system audio per spec) */}
-        <Tooltip text={p.micOn ? 'Microphone · on' : 'Microphone · off'}>
+        {/* 2. MIC TOGGLE */}
+        <Tooltip text={p.micOn ? 'Microphone · on' : 'Microphone · off'} flipped={flipped}>
           <button onClick={p.onToggleMic}
             className="relative flex items-center justify-center transition-all"
             style={{
@@ -2342,16 +2352,18 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
           </button>
         </Tooltip>
+        {/* 3. MIC SELECTOR */}
         {p.micOn && p.micDevices.length > 1 && (
           <MicSelector
             inputDevices={p.micDevices}
             selectedInputId={p.selectedMicId}
             onInputChange={p.onMicDeviceChange}
             compact
+            flipped={flipped}
           />
         )}
         {/* 4. SYSTEM AUDIO */}
-        <Tooltip text={isSysActive ? 'System audio · recording' : 'System audio · off'}>
+        <Tooltip text={isSysActive ? 'System audio · recording' : 'System audio · off'} flipped={flipped}>
           <button onClick={p.onToggleSys}
             className="relative flex items-center justify-center transition-all"
             style={{
@@ -2368,16 +2380,16 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           </button>
         </Tooltip>
         <Sep />
-        {/* 6. ANSWER */}
-        <Tooltip text="Generate answer ⌘↵">
+        {/* 5. ANSWER */}
+        <Tooltip text="Generate answer ⌘↵" flipped={flipped}>
           <AnswerBtn
             onClick={p.onAnswer}
             disabled={!p.isRunning || !p.isOnline}
             streaming={p.isStreaming}
           />
         </Tooltip>
-        {/* 7. SCREENSHOT */}
-        <Tooltip text="Screenshot ⌘⇧↵">
+        {/* 6. SCREENSHOT */}
+        <Tooltip text="Screenshot ⌘⇧↵" flipped={flipped}>
           <TBtn onClick={() => p.onScreenshot(true)}>
             <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
@@ -2386,8 +2398,8 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘⇧↵</span>
           </TBtn>
         </Tooltip>
-        {/* 8. CHAT */}
-        <Tooltip text="Chat ⌘⇧-">
+        {/* 7. CHAT */}
+        <Tooltip text="Chat ⌘⇧-" flipped={flipped}>
           <TBtn active={p.showChat} onClick={p.onToggleChat}>
             <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
@@ -2401,11 +2413,15 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             )}
           </TBtn>
         </Tooltip>
-        <Sep />
-        {/* 10. TIMER */}
+
+        {/* ── SPACER ── */}
+        <div style={{ flex: 1 }} />
+
+        {/* ── RIGHT GROUP: navigation/meta ── */}
+        {/* 8. TIMER */}
         <SessionTimer key={p.timerKey} startSeconds={p.timerStartSeconds} onExpire={p.onTimerExpire} mode={p.sessionTimerMode} timerKey={p.timerKey} />
-        {/* 11. STATUS DOT */}
-        <Tooltip text={statusLabel}>
+        {/* 9. STATUS DOT */}
+        <Tooltip text={statusLabel} flipped={flipped}>
           <div style={{ padding: '0 3px', display: 'flex', alignItems: 'center' }}>
             <span style={{
               width: 5, height: 5, borderRadius: '50%',
@@ -2415,16 +2431,17 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           </div>
         </Tooltip>
         {!p.isOnline && (
-          <Tooltip text="No internet — Answer disabled">
+          <Tooltip text="No internet — Answer disabled" flipped={flipped}>
             <span style={{ fontSize: 11, color: '#fde68a', fontWeight: 600 }}>⚠</span>
           </Tooltip>
         )}
-        {/* 12. POSITION GRID */}
-        <Tooltip text="Move window ⌘⇧↑↓←→">
+        <Sep />
+        {/* 10. POSITION GRID */}
+        <Tooltip text="Move window ⌘⇧↑↓←→" flipped={flipped}>
           <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={12} gap={2} flashPos={p.flashPos} />
         </Tooltip>
-        {/* 13. HAMBURGER */}
-        <Tooltip text="Settings">
+        {/* 11. HAMBURGER */}
+        <Tooltip text="Settings" flipped={flipped}>
           <IBtn onClickWithRect={p.onSettingsClick}
                 className={p.showSettings ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/30' : ''}>
             <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
@@ -2432,8 +2449,8 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             </svg>
           </IBtn>
         </Tooltip>
-        {/* 14. COLLAPSE */}
-        <Tooltip text="Hide ⌃⌘H">
+        {/* 12. COLLAPSE */}
+        <Tooltip text="Hide ⌃⌘H" flipped={flipped}>
           <IBtn onClick={p.onHide}>
             <ChevronUp />
             <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38, marginLeft: 2 }}>⌃⌘H</span>
