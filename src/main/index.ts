@@ -317,6 +317,66 @@ function createPopoverWindow(): void {
   popoverWindow.on('closed', () => { popoverWindow = null })
 }
 
+// ─── Tooltip window — tiny transparent BrowserWindow for hover tooltips ──────
+let tooltipWindow: BrowserWindow | null = null
+
+function createTooltipWindow(): void {
+  tooltipWindow = new BrowserWindow({
+    width: 250,
+    height: 36,
+    x: -10000, y: -10000,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    roundedCorners: false,
+    resizable: false,
+    movable: false,
+    focusable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: !IS_DEV,
+      backgroundThrottling: false,
+    },
+  })
+  tooltipWindow.setContentProtection(CONTENT_PROTECTION)
+  tooltipWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  tooltipWindow.setAlwaysOnTop(true, 'screen-saver', 2)
+  tooltipWindow.setIgnoreMouseEvents(true)
+
+  const tooltipUrl = IS_DEV && RENDERER_DEV_URL ? `${RENDERER_DEV_URL}?view=tooltip` : null
+  if (tooltipUrl) {
+    tooltipWindow.loadURL(tooltipUrl)
+  } else {
+    tooltipWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { view: 'tooltip' } })
+  }
+  tooltipWindow.on('closed', () => { tooltipWindow = null })
+}
+
+function showTooltip(text: string, screenX: number, screenY: number, below: boolean): void {
+  if (!tooltipWindow || tooltipWindow.isDestroyed()) createTooltipWindow()
+  if (!tooltipWindow) return
+  // Measure text to estimate width (rough: 7px per char + 24px padding)
+  const estW = Math.min(300, Math.max(60, text.length * 7 + 24))
+  const h = 30
+  const x = Math.round(screenX - estW / 2)
+  const y = below ? Math.round(screenY + 6) : Math.round(screenY - h - 6)
+  tooltipWindow.setBounds({ x, y, width: estW, height: h })
+  tooltipWindow.webContents.send('tooltip:update', text)
+  tooltipWindow.setAlwaysOnTop(true, 'screen-saver', 2)
+  tooltipWindow.showInactive()
+}
+
+function hideTooltip(): void {
+  tooltipWindow?.hide()
+}
+
 // ─── Window factory ───────────────────────────────────────────────────────────
 // ─── Snap-position persistence (main-side, so the window is born in place) ────
 const SNAP_MARGIN = 8
@@ -362,6 +422,7 @@ function computeSnapXY(
 function moveToSnap(pos: string, keepCurrentSize = false): void {
   if (!mainWindow) return
   hidePopoverWindow()
+  hideTooltip()
   const currentDisplay = screen.getDisplayMatching(mainWindow.getBounds())
   const wa = currentDisplay.workArea
   const [curW, curH] = mainWindow.getSize()
@@ -925,6 +986,14 @@ function registerIPC(): void {
   ipcMain.on('popover:report-height', (_e, height: number) => {
     positionPopoverWindow(height)
   })
+  // ── Tooltip IPC ──────────────────────────────────────────────────────────────
+  ipcMain.on('tooltip:show', (_e, data: { text: string; x: number; y: number; below: boolean }) => {
+    if (!mainWindow) return
+    const mainBounds = mainWindow.getBounds()
+    showTooltip(data.text, mainBounds.x + data.x, mainBounds.y + data.y, data.below)
+  })
+  ipcMain.on('tooltip:hide', () => hideTooltip())
+
   ipcMain.handle('window:set-size', (_e, w: number, h: number) => {
     if (!mainWindow) return
     mainWindow.setSize(Math.round(w), Math.round(h), false)
@@ -945,6 +1014,7 @@ function registerIPC(): void {
   ipcMain.handle('window:set-content-protection', (_e, on: boolean) => {
     mainWindow?.setContentProtection(on)
     popoverWindow?.setContentProtection(on)
+    tooltipWindow?.setContentProtection(on)
   })
 
   // Position presets — 6 snap positions with 8px margins from the work area.
@@ -1474,6 +1544,7 @@ app.whenReady().then(async () => {
 
   createWindow()
   createPopoverWindow()   // pre-created hidden so it shows instantly on first hamburger click
+  createTooltipWindow()   // pre-created hidden so first tooltip shows instantly
   registerShortcuts()
   registerDisplayListeners()
   startForcedLogoutPolling()

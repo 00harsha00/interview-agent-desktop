@@ -14,7 +14,6 @@
 import React, {
   useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
-import { createPortal } from 'react-dom'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
 import { cn } from '@/lib/utils'
@@ -149,13 +148,11 @@ function Dot({ color = 'red' }: { color?: 'red' | 'green' }) {
   )
 }
 
-/** Portal-based tooltip — rendered into document.body so it's never clipped by
- *  parent overflow or the Electron window bounds.
+/** Tooltip — uses a separate BrowserWindow (tooltipWindow) positioned in real
+ *  screen coordinates so it can never be clipped by the app window bounds.
  *  flipped=true (bottom snap positions) → tooltip opens ABOVE the element.
  *  flipped=false (top snap positions) → tooltip opens BELOW the element. */
 function Tooltip({ text, children, flipped = false }: { text: string; children: React.ReactNode; flipped?: boolean }) {
-  const [visible, setVisible] = useState(false)
-  const [pos, setPos] = useState({ top: 0, bottom: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
   return (
     <div
@@ -163,43 +160,18 @@ function Tooltip({ text, children, flipped = false }: { text: string; children: 
       onMouseEnter={() => {
         const rect = ref.current?.getBoundingClientRect()
         if (rect) {
-          setPos({
-            top: rect.bottom + 8,
-            bottom: window.innerHeight - rect.top + 8,
-            left: rect.left + rect.width / 2,
+          window.electronAPI.tooltip.show({
+            text,
+            x: rect.left + rect.width / 2,
+            y: flipped ? rect.top : rect.bottom,
+            below: !flipped,
           })
-          setVisible(true)
         }
       }}
-      onMouseLeave={() => setVisible(false)}
+      onMouseLeave={() => window.electronAPI.tooltip.hide()}
       style={{ display: 'inline-flex' }}
     >
       {children}
-      {visible && createPortal(
-        <div style={{
-          position: 'fixed',
-          ...(flipped
-            ? { bottom: pos.bottom, transform: 'translate(-50%, 0)' }
-            : { top: pos.top, transform: 'translate(-50%, 0)' }
-          ),
-          left: pos.left,
-          background: 'rgba(10,10,14,0.97)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          borderRadius: 7,
-          padding: '4px 8px',
-          fontSize: 11,
-          color: 'rgba(255,255,255,0.9)',
-          whiteSpace: 'nowrap',
-          zIndex: 99999,
-          pointerEvents: 'none',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-        }}>
-          {text}
-        </div>,
-        document.body,
-      )}
     </div>
   )
 }
@@ -2048,7 +2020,6 @@ const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, hei
           {!hasContent ? (
             <p className="text-[11px] text-white/25 italic whitespace-nowrap">Waiting for speech…</p>
           ) : (
-            /* The tunnel — one color-coded container wrapping the whole queued group */
             <div
               className="flex items-center gap-1.5 px-2 py-1 rounded-xl flex-shrink-0"
               style={{
@@ -2057,22 +2028,29 @@ const CaptionPanel = React.memo(function CaptionPanel({ transcript, partial, hei
                 borderLeft: '3px solid #6366f1',
               }}
             >
-              {queued.map((t) => (
-                <span
-                  key={t.id}
-                  className="flex-shrink-0 max-w-[340px] truncate px-2.5 py-0.5 rounded-full leading-snug text-white"
-                  style={{ background: 'rgba(255,255,255,0.10)', fontSize }}
-                  title={`${t.speaker === 'MIC' ? 'You' : 'Interviewer'}: ${t.text}`}
-                >
+              {queued.map((t, i) => {
+                const isMic = t.speaker === 'MIC'
+                const prevSpeaker = i > 0 ? queued[i - 1].speaker : null
+                const showLabel = t.speaker !== prevSpeaker
+                const chipBg = isMic ? 'rgba(34,197,94,0.1)' : 'rgba(99,102,241,0.15)'
+                const chipBorder = isMic ? 'rgba(34,197,94,0.25)' : 'rgba(99,102,241,0.3)'
+                const chipColor = isMic ? 'rgba(150,230,170,0.9)' : 'rgba(180,190,255,0.9)'
+                return (
                   <span
-                    className="font-semibold mr-1"
-                    style={{ color: t.speaker === 'MIC' ? 'rgba(167,139,250,0.85)' : 'rgba(255,255,255,0.4)' }}
+                    key={t.id}
+                    className="flex-shrink-0 max-w-[340px] truncate px-2.5 py-0.5 rounded-full leading-snug"
+                    style={{ background: chipBg, boxShadow: `inset 0 0 0 1px ${chipBorder}`, color: chipColor, fontSize }}
+                    title={`${isMic ? 'You' : 'Interviewer'}: ${t.text}`}
                   >
-                    {t.speaker === 'MIC' ? 'You:' : 'Interviewer:'}
+                    {showLabel && (
+                      <span className="font-semibold mr-1" style={{ opacity: 0.7 }}>
+                        {isMic ? 'You:' : 'Interviewer:'}
+                      </span>
+                    )}
+                    {t.text}
                   </span>
-                  {t.text}
-                </span>
-              ))}
+                )
+              })}
               {partial && (
                 <span className="flex-shrink-0 max-w-[340px] truncate px-1.5 leading-snug text-white/45 italic" style={{ fontSize }}>
                   {partial}

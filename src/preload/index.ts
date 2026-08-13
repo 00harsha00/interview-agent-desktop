@@ -37,6 +37,13 @@ const electronAPI = {
     reportHeight: (h: number) => ipcRenderer.send('popover:report-height', h),
   },
 
+  // Tooltip — separate BrowserWindow, positioned by main in screen coordinates
+  tooltip: {
+    show: (data: { text: string; x: number; y: number; below: boolean }) =>
+      ipcRenderer.send('tooltip:show', data),
+    hide: () => ipcRenderer.send('tooltip:hide'),
+  },
+
   // App info
   app: {
     version:  () => ipcRenderer.invoke('app:version') as Promise<string>,
@@ -95,6 +102,7 @@ const electronAPI = {
       'auth:force-logout',
       'display:moved-to-primary',
       'display:list-changed',
+      'tooltip:update',
       'update:available',
       'update:ready',
     ])
