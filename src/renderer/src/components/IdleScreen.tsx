@@ -4,6 +4,60 @@ import { AI_MODEL_LABELS, FRONTEND_URL } from '@/config'
 import { createSession, getUserResumes, getUserDocuments } from '@/lib/api'
 import type { UserResume, UserDocument } from '@/lib/api'
 
+// ─── Snap-position grid (matches SessionOverlay) ────────────────────────────
+const SNAP_POSITIONS = [
+  ['top-left', 'top-center', 'top-right'],
+  ['bottom-left', 'bottom-center', 'bottom-right'],
+] as const
+type SnapPos = (typeof SNAP_POSITIONS)[number][number]
+const SNAP_ICONS: Record<string, string> = {
+  'top-left': '↖', 'top-center': '↑', 'top-right': '↗',
+  'bottom-left': '↙', 'bottom-center': '↓', 'bottom-right': '↘',
+}
+const SNAP_NEIGHBORS: Record<SnapPos, SnapPos[]> = {
+  'top-left':      ['top-center', 'bottom-left'],
+  'top-center':    ['top-left', 'top-right', 'bottom-center'],
+  'top-right':     ['top-center', 'bottom-right'],
+  'bottom-left':   ['top-left', 'bottom-center'],
+  'bottom-center': ['bottom-left', 'bottom-right', 'top-center'],
+  'bottom-right':  ['top-right', 'bottom-center'],
+}
+function PositionGrid({ snapPos, onMove, size = 14, gap = 2 }: {
+  snapPos: SnapPos; onMove: (p: SnapPos) => void; size?: number; gap?: number
+}) {
+  const neighbors = SNAP_NEIGHBORS[snapPos] ?? []
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', width: size * 3 + gap * 2, gap }}>
+      {SNAP_POSITIONS.flat().map((pos) => {
+        const isActive = snapPos === pos
+        const isNeighbor = neighbors.includes(pos)
+        const isDisabled = !isActive && !isNeighbor
+        return (
+          <button
+            key={pos}
+            onClick={() => { if (!isDisabled) onMove(pos) }}
+            disabled={isDisabled}
+            title={pos.replace('-', ' ')}
+            style={{
+              width: size, height: size, fontSize: Math.max(8, Math.round(size * 0.5)),
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: 4, border: 'none', cursor: isDisabled ? 'default' : 'pointer',
+              transition: 'all 0.15s',
+              opacity: isDisabled ? 0.15 : 1,
+              background: isActive ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.05)',
+              color: isActive ? '#a5b4fc' : 'rgba(255,255,255,0.4)',
+              boxShadow: isActive ? 'inset 0 0 0 1px rgba(99,102,241,0.3)' : 'none',
+              WebkitAppRegion: 'no-drag',
+            } as React.CSSProperties}
+          >
+            {SNAP_ICONS[pos]}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 interface Props {
   user: AuthUser
   onHide: (height?: number) => void
@@ -46,6 +100,16 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
   const [createErr,    setCreateErr]    = useState<string | null>(null)
   const [resumes,      setResumes]      = useState<UserResume[]>([])
   const [documents,    setDocuments]    = useState<UserDocument[]>([])
+
+  // Snap position — persisted in localStorage, shared with SessionOverlay
+  const [snapPos, setSnapPos] = useState<SnapPos>(() =>
+    (localStorage.getItem('overlay-snap-pos') as SnapPos | null) ?? 'top-center'
+  )
+  const handleSnapMove = (pos: SnapPos) => {
+    setSnapPos(pos)
+    localStorage.setItem('overlay-snap-pos', pos)
+    void window.electronAPI.window.moveTo(pos)
+  }
 
   // form fields
   const [company,      setCompany]      = useState('')
@@ -135,7 +199,7 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div
         className="flex items-center gap-2 px-4 h-10 flex-shrink-0"
-        style={{ background: 'rgba(0,0,0,0.25)', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.06)', WebkitAppRegion: 'drag' } as React.CSSProperties}
+        style={{ background: 'rgba(0,0,0,0.25)', boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.06)' }}
       >
         <div className="flex items-center gap-2 flex-shrink-0">
           <div className="h-5 w-5 rounded-lg flex items-center justify-center flex-shrink-0"
@@ -146,8 +210,9 @@ export function IdleScreen({ user, onHide, onSignOut, onStartSession }: Props) {
             Interview <span className="text-indigo-400">Agent</span>
           </span>
         </div>
-        <div className="flex-1" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
-        <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <div className="flex-1" />
+        <PositionGrid snapPos={snapPos} onMove={handleSnapMove} />
+        <div className="flex items-center gap-1">
           {view === 'create' && (
             <button onClick={() => { setView('idle'); setCreateErr(null) }}
               className="text-[10px] text-white/35 hover:text-white/70 px-2 h-5 rounded-md transition-colors"

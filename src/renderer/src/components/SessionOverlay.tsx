@@ -163,6 +163,38 @@ function Dot({ color = 'red' }: { color?: 'red' | 'green' }) {
   )
 }
 
+/** Custom tooltip — position:fixed via getBoundingClientRect */
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  const [show, setShow] = useState(false)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div
+      ref={ref}
+      onMouseEnter={() => {
+        const rect = ref.current?.getBoundingClientRect()
+        if (rect) { setPos({ x: rect.left + rect.width / 2, y: rect.top }); setShow(true) }
+      }}
+      onMouseLeave={() => setShow(false)}
+      style={{ display: 'inline-flex', position: 'relative' }}
+    >
+      {children}
+      {show && (
+        <div style={{
+          position: 'fixed', left: pos.x, top: pos.y - 4,
+          transform: 'translate(-50%, -100%)',
+          background: 'rgba(0,0,0,0.88)', color: 'rgba(255,255,255,0.9)',
+          fontSize: 10, padding: '3px 7px', borderRadius: 5,
+          whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 9999,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        }}>
+          {text}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Primary answer-style button (subtle green glow) */
 function AnswerBtn({ disabled, onClick, streaming, title }: { disabled?: boolean; onClick: () => void; streaming?: boolean; title?: string }) {
   return (
@@ -540,7 +572,7 @@ interface PopoverSettings {
   extraContext: string; aiModel: AIModel; snapPos: SnapPos; fontSize: number
 }
 const DEFAULT_POPOVER_SETTINGS: PopoverSettings = {
-  zoom: 1, opacity: 1, autoGen: true, autoDetect: true, privateMode: false,
+  zoom: 1, opacity: 0.65, autoGen: true, autoDetect: true, privateMode: false,
   language: 'en', extraContext: '', aiModel: 'GPT4O', snapPos: 'top-center', fontSize: FONT_SIZE_DEFAULT,
 }
 export function SettingsPopoverWindow() {
@@ -689,33 +721,46 @@ const SNAP_ICONS: Record<string, string> = {
   'bottom-left': '↙', 'bottom-center': '↓', 'bottom-right': '↘',
 }
 
-/** Shared 3×3 snap-position grid — used both in the hamburger menu (24×24,
- * `compact=false`) and directly in the toolbar (14×14, `compact=true`) so a
- * position change is one click away without opening the menu at all. */
+const SNAP_NEIGHBORS: Record<SnapPos, SnapPos[]> = {
+  'top-left':      ['top-center', 'bottom-left'],
+  'top-center':    ['top-left', 'top-right', 'bottom-center'],
+  'top-right':     ['top-center', 'bottom-right'],
+  'bottom-left':   ['top-left', 'bottom-center'],
+  'bottom-center': ['bottom-left', 'bottom-right', 'top-center'],
+  'bottom-right':  ['top-right', 'bottom-center'],
+}
+
 function PositionGrid({ snapPos, onMove, size = 24, gap = 3, compact = false, onAfterMove, flashPos }: {
   snapPos: SnapPos; onMove: (p: SnapPos) => void
   size?: number; gap?: number; compact?: boolean; onAfterMove?: () => void
   flashPos?: SnapPos | null
 }) {
+  const neighbors = SNAP_NEIGHBORS[snapPos] ?? []
   return (
     <div className="grid grid-cols-3" style={{ width: size * 3 + gap * 2, gap }}>
       {SNAP_POSITIONS.flat().map((pos) => {
         const isActive = snapPos === pos
         const isFlashing = flashPos === pos
+        const isNeighbor = neighbors.includes(pos)
+        const isDisabled = !isActive && !isNeighbor
         return (
           <button
             key={pos}
-            onClick={() => { onMove(pos); onAfterMove?.() }}
+            onClick={() => { if (!isDisabled) { onMove(pos); onAfterMove?.() } }}
             title={pos.replace('-', ' ')}
+            disabled={isDisabled}
             className={cn(
               'flex items-center justify-center rounded-md transition-all',
+              isDisabled && 'opacity-15 cursor-default',
               isFlashing
                 ? 'bg-indigo-400/40 text-white ring-1 ring-indigo-300/50'
                 : isActive
                   ? 'bg-indigo-500/25 text-indigo-300 ring-1 ring-indigo-400/30'
-                  : compact
-                    ? 'bg-white/5 text-white/40 hover:text-white/80 hover:opacity-80'
-                    : 'text-white/45 hover:text-white hover:bg-white/10',
+                  : isNeighbor
+                    ? compact
+                      ? 'bg-white/5 text-white/40 hover:text-white/80 hover:opacity-80'
+                      : 'text-white/45 hover:text-white hover:bg-white/10'
+                    : 'bg-transparent text-white/15',
             )}
             style={{ width: size, height: size, fontSize: Math.max(8, Math.round(size * 0.5)) }}
           >
@@ -969,7 +1014,7 @@ export function SessionOverlay({
   const [showChat,     setShowChat]     = useState(false)
   const [showAnswer,   setShowAnswer]   = useState(false)
   const [zoom,         setZoom]         = useState(1)
-  const [opacity,      setOpacity]      = useState(1)
+  const [opacity,      setOpacity]      = useState(0.65)
   const [autoGen,      setAutoGen]      = useState(session.autoGenerate ?? true)
   // Auto-detect = detect questions from the transcript (silence-based detection).
   // Auto Generate (autoGen) = automatically SEND the detected question to the AI.
@@ -1050,6 +1095,7 @@ export function SessionOverlay({
   // read the current open/closed state synchronously without needing
   // `showSettings` in its own dependency array.
   const showSettingsRef = useRef(false)
+  const popoverClosedAtRef = useRef(0)
   // Settings snapshot kept in a ref for the same reason — onSettingsClick
   // reads this to send the popover window its current values on open,
   // without needing every settings field in its dependency array either.
@@ -1433,6 +1479,10 @@ export function SessionOverlay({
   // instead of toggling in-window portal state. Positioned in real screen
   // coordinates by main, so it can never resize or get clipped by this window.
   const onSettingsClick   = useCallback((r: DOMRect) => {
+    // Guard: if the popover was just closed by blur (click-outside / trackpad),
+    // the same click event that caused the blur will also fire here — skip it
+    // so the popover doesn't immediately re-open.
+    if (Date.now() - popoverClosedAtRef.current < 300) return
     const opening = !showSettingsRef.current
     showSettingsRef.current = opening
     setShowSettings(opening)
@@ -1476,6 +1526,7 @@ export function SessionOverlay({
   useEffect(() => {
     const uClosed = window.electronAPI.on('popover:closed', () => {
       showSettingsRef.current = false
+      popoverClosedAtRef.current = Date.now()
       setShowSettings(false)
     })
     const uAction = window.electronAPI.on('popover:action', (action: unknown) => {
@@ -2253,41 +2304,36 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
         className="flex flex-nowrap items-center gap-1 px-2.5 py-1 select-none overflow-hidden"
         style={{ ...PANEL_BG, borderRadius: 0, minHeight: TOOLBAR_H, flexShrink: 0 }}
       >
-        {/* Logo + company name + session badge + model */}
-        <div className="flex items-center gap-1.5 flex-shrink min-w-0">
+        {/* Logo only — company name + model badge removed for cleaner toolbar */}
+        <Tooltip text={`${p.companyName} · ${AI_MODEL_LABELS[p.aiModel] ?? p.aiModel}`}>
           <LogoWaveform active={p.isRunning && (p.sysOn || p.micOn)} />
-          <span className="text-white/50 text-[10px] font-medium truncate max-w-[80px]" title={p.companyName}>{p.companyName}</span>
-          <span className="text-[8px] font-medium px-1 py-0.5 rounded-full flex-shrink-0 truncate max-w-[70px] text-white/35 bg-white/6"
-                title={`Active AI model: ${AI_MODEL_LABELS[p.aiModel] ?? p.aiModel}`}>
-            {AI_MODEL_LABELS[p.aiModel] ?? p.aiModel}
-          </span>
-        </div>
+        </Tooltip>
         <Sep />
         {/* Audio indicators */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button onClick={p.onToggleSys}
-                  title={p.sysOn ? 'System audio enabled — click to disable' : 'System audio disabled — click to enable'}
-                  className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
-                    isSysActive ? 'text-red-400' : p.sysOn ? 'text-white/50 hover:text-white/80' : 'text-white/20 hover:text-white/50',
-                    isSysActive && 'bg-red-500/10')}>
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-            {p.sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
-          </button>
+          <Tooltip text={p.sysOn ? 'System audio ON' : 'System audio OFF'}>
+            <button onClick={p.onToggleSys}
+                    className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
+                      isSysActive ? 'text-red-400' : p.sysOn ? 'text-white/50 hover:text-white/80' : 'text-white/20 hover:text-white/50',
+                      isSysActive && 'bg-red-500/10')}>
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              {p.sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
+            </button>
+          </Tooltip>
           <Sep />
-          <button onClick={p.onToggleMic}
-                  title={p.micOn
-                    ? `Microphone enabled (${p.micDevices.find((d) => d.id === p.selectedMicId)?.label ?? 'default'}) — click to disable`
-                    : 'Microphone disabled — click to enable'}
-                  className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
-                    isMicActive ? 'text-red-400' : p.micOn ? 'text-white/50 hover:text-white/80' : 'text-white/20 hover:text-white/50',
-                    isMicActive && 'bg-red-500/10')}>
-            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-            </svg>
-            {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
-          </button>
+          <Tooltip text={p.micOn ? `Mic: ${p.micDevices.find((d) => d.id === p.selectedMicId)?.label ?? 'default'}` : 'Mic OFF'}>
+            <button onClick={p.onToggleMic}
+                    className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
+                      isMicActive ? 'text-red-400' : p.micOn ? 'text-white/50 hover:text-white/80' : 'text-white/20 hover:text-white/50',
+                      isMicActive && 'bg-red-500/10')}>
+              <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+              </svg>
+              {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
+            </button>
+          </Tooltip>
           {/* Only shown once mic is on — picking an input device before
               there's any capture running is meaningless, and it saves the
               tight toolbar row the space otherwise. */}
@@ -2307,24 +2353,28 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           streaming={p.isStreaming}
           title={!p.isOnline ? 'No internet connection' : undefined}
         />
-        <TBtn onClick={() => p.onScreenshot(true)}>
-          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-          Screenshot <Kbd s="⌘⇧↵" />
-        </TBtn>
-        <TBtn active={p.showChat} onClick={p.onToggleChat}>
-          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-          </svg>
-          Chat <Kbd s="⌘⇧—" />
-          {p.showAnswer && p.qaPairsCount > 0 && (
-            <span className="ml-0.5 h-4 min-w-[16px] px-1 rounded-full bg-green-500/80 text-white text-[8px] font-bold flex items-center justify-center">
-              {p.qaPairsCount}
-            </span>
-          )}
-        </TBtn>
+        <Tooltip text="Screenshot">
+          <TBtn onClick={() => p.onScreenshot(true)}>
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <Kbd s="⌘⇧↵" />
+          </TBtn>
+        </Tooltip>
+        <Tooltip text="Chat">
+          <TBtn active={p.showChat} onClick={p.onToggleChat}>
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+            <Kbd s="⌘⇧—" />
+            {p.showAnswer && p.qaPairsCount > 0 && (
+              <span className="ml-0.5 h-4 min-w-[16px] px-1 rounded-full bg-green-500/80 text-white text-[8px] font-bold flex items-center justify-center">
+                {p.qaPairsCount}
+              </span>
+            )}
+          </TBtn>
+        </Tooltip>
         <div className="flex-1" />
         <SessionTimer key={p.timerKey} startSeconds={p.timerStartSeconds} onExpire={p.onTimerExpire} mode={p.sessionTimerMode} timerKey={p.timerKey} />
         {/* Mini position grid — one click to snap, no need to open the menu.
@@ -2351,12 +2401,13 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             label = 'Ready'; bg = 'rgba(255,255,255,0.07)'; color = 'rgba(255,255,255,0.45)'; ring = 'rgba(255,255,255,0.12)'; dotColor = 'rgba(255,255,255,0.3)'
           }
           return (
-            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[11px] font-semibold flex-shrink-0 whitespace-nowrap"
-                 style={{ background: bg, color, boxShadow: `inset 0 0 0 1px ${ring}` }}>
-              <span className="h-1.5 w-1.5 rounded-full flex-shrink-0"
-                    style={{ background: dotColor, animation: (p.isRunning && (p.smState === 'connected' || p.smState === 'reconnecting')) || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
-              {label}
-            </div>
+            <Tooltip text={label}>
+              <div className="flex items-center justify-center h-5 w-5 rounded-lg flex-shrink-0"
+                   style={{ background: bg, boxShadow: `inset 0 0 0 1px ${ring}` }}>
+                <span className="h-2 w-2 rounded-full flex-shrink-0"
+                      style={{ background: dotColor, animation: (p.isRunning && (p.smState === 'connected' || p.smState === 'reconnecting')) || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
+              </div>
+            </Tooltip>
           )
         })()}
         {/* Offline indicator — network drop doesn't stop the timer or (if
@@ -2370,16 +2421,19 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             ⚠ Offline
           </div>
         )}
-        <IBtn title={p.showSettings ? 'Close menu' : 'Menu'}
-              onClickWithRect={p.onSettingsClick}
-              className={p.showSettings ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/30' : ''}>
-          <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4zM10 12a2 2 0 100 4 2 2 0 000-4z" />
-          </svg>
-        </IBtn>
-        <IBtn title="Collapse (⌃⌘H)" onClick={p.onHide} className="opacity-85 hover:opacity-100">
-          <ChevronUp />
-        </IBtn>
+        <Tooltip text={p.showSettings ? 'Close menu' : 'Menu'}>
+          <IBtn onClickWithRect={p.onSettingsClick}
+                className={p.showSettings ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/30' : ''}>
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4zM10 12a2 2 0 100 4 2 2 0 000-4z" />
+            </svg>
+          </IBtn>
+        </Tooltip>
+        <Tooltip text="Collapse ⌃⌘H">
+          <IBtn onClick={p.onHide} className="opacity-85 hover:opacity-100">
+            <ChevronUp />
+          </IBtn>
+        </Tooltip>
         <Kbd s="⌃⌘H" />
       </div>
     </>

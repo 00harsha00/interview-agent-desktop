@@ -1,6 +1,59 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { FRONTEND_URL } from '@/config'
 
+// ─── Snap-position grid (matches SessionOverlay) ────────────────────────────
+const SNAP_POSITIONS = [
+  ['top-left', 'top-center', 'top-right'],
+  ['bottom-left', 'bottom-center', 'bottom-right'],
+] as const
+type SnapPos = (typeof SNAP_POSITIONS)[number][number]
+const SNAP_ICONS: Record<string, string> = {
+  'top-left': '↖', 'top-center': '↑', 'top-right': '↗',
+  'bottom-left': '↙', 'bottom-center': '↓', 'bottom-right': '↘',
+}
+const SNAP_NEIGHBORS: Record<SnapPos, SnapPos[]> = {
+  'top-left':      ['top-center', 'bottom-left'],
+  'top-center':    ['top-left', 'top-right', 'bottom-center'],
+  'top-right':     ['top-center', 'bottom-right'],
+  'bottom-left':   ['top-left', 'bottom-center'],
+  'bottom-center': ['bottom-left', 'bottom-right', 'top-center'],
+  'bottom-right':  ['top-right', 'bottom-center'],
+}
+function MiniPositionGrid({ snapPos, onMove, size = 14, gap = 2 }: {
+  snapPos: SnapPos; onMove: (p: SnapPos) => void; size?: number; gap?: number
+}) {
+  const neighbors = SNAP_NEIGHBORS[snapPos] ?? []
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', width: size * 3 + gap * 2, gap }}>
+      {SNAP_POSITIONS.flat().map((pos) => {
+        const isActive = snapPos === pos
+        const isNeighbor = neighbors.includes(pos)
+        const isDisabled = !isActive && !isNeighbor
+        return (
+          <button
+            key={pos}
+            onClick={() => { if (!isDisabled) onMove(pos) }}
+            disabled={isDisabled}
+            title={pos.replace('-', ' ')}
+            style={{
+              width: size, height: size, fontSize: Math.max(8, Math.round(size * 0.5)),
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              borderRadius: 4, border: 'none', cursor: isDisabled ? 'default' : 'pointer',
+              transition: 'all 0.15s',
+              opacity: isDisabled ? 0.15 : 1,
+              background: isActive ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.05)',
+              color: isActive ? '#a5b4fc' : 'rgba(255,255,255,0.4)',
+              boxShadow: isActive ? 'inset 0 0 0 1px rgba(99,102,241,0.3)' : 'none',
+            } as React.CSSProperties}
+          >
+            {SNAP_ICONS[pos]}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 interface Props {
   state: 'loading' | 'unauthenticated'
   onHide: (height?: number) => void
@@ -8,15 +61,14 @@ interface Props {
 }
 
 // ─── Header (shared across auth screens) ─────────────────────────────────────
-function AuthHeader({ onHide }: { onHide: () => void }) {
+function AuthHeader({ onHide, snapPos, onSnapMove }: { onHide: () => void; snapPos: SnapPos; onSnapMove: (p: SnapPos) => void }) {
   return (
     <div
       className="flex items-center gap-2 px-4 h-10 flex-shrink-0"
       style={{
         background: 'rgba(0,0,0,0.25)',
         boxShadow: 'inset 0 -1px 0 rgba(255,255,255,0.06)',
-        WebkitAppRegion: 'drag',
-      } as React.CSSProperties}
+      }}
     >
       <div className="flex items-center gap-2 flex-shrink-0">
         <div
@@ -29,11 +81,9 @@ function AuthHeader({ onHide }: { onHide: () => void }) {
           Interview <span className="text-indigo-400">Agent</span>
         </span>
       </div>
-      <div className="flex-1" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
-      <div
-        className="flex items-center gap-1"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
+      <div className="flex-1" />
+      <MiniPositionGrid snapPos={snapPos} onMove={onSnapMove} />
+      <div className="flex items-center gap-1">
         <button
           onClick={onHide}
           title="Collapse"
@@ -58,7 +108,7 @@ function AuthHeader({ onHide }: { onHide: () => void }) {
 }
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
-function LoadingScreen({ onHide }: { onHide: () => void }) {
+function LoadingScreen({ onHide, snapPos, onSnapMove }: { onHide: () => void; snapPos: SnapPos; onSnapMove: (p: SnapPos) => void }) {
   return (
     <div
       data-overlay
@@ -72,7 +122,7 @@ function LoadingScreen({ onHide }: { onHide: () => void }) {
         margin: '0 auto',
       }}
     >
-      <AuthHeader onHide={onHide} />
+      <AuthHeader onHide={onHide} snapPos={snapPos} onSnapMove={onSnapMove} />
       <div className="flex items-center gap-3 px-5 py-6">
         <div className="h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0"
              style={{ background: 'rgba(99,102,241,0.1)', boxShadow: 'inset 0 0 0 1px rgba(99,102,241,0.2)' }}>
@@ -99,6 +149,15 @@ export function AuthGate({ state, onHide, onAuthSuccess }: Props) {
   const [showBrowser,setShowBrowser]= useState(false)
   const emailRef    = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
+
+  const [snapPos, setSnapPos] = useState<SnapPos>(() =>
+    (localStorage.getItem('overlay-snap-pos') as SnapPos | null) ?? 'top-center'
+  )
+  const handleSnapMove = (pos: SnapPos) => {
+    setSnapPos(pos)
+    localStorage.setItem('overlay-snap-pos', pos)
+    void window.electronAPI.window.moveTo(pos)
+  }
 
   // Resize window and focus email when sign-in form appears
   useEffect(() => {
@@ -131,7 +190,7 @@ export function AuthGate({ state, onHide, onAuthSuccess }: Props) {
   }, [email, password, onAuthSuccess])
 
   if (state === 'loading') {
-    return <LoadingScreen onHide={() => onHide(390)} />
+    return <LoadingScreen onHide={() => onHide(390)} snapPos={snapPos} onSnapMove={handleSnapMove} />
   }
 
   const inputStyle: React.CSSProperties = {
@@ -155,7 +214,7 @@ export function AuthGate({ state, onHide, onAuthSuccess }: Props) {
         margin: '0 auto',
       }}
     >
-      <AuthHeader onHide={() => onHide(390)} />
+      <AuthHeader onHide={() => onHide(390)} snapPos={snapPos} onSnapMove={handleSnapMove} />
 
       <div className="px-5 py-5">
 
