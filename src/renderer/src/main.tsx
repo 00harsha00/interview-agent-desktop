@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App, { FocusToast, AuthNoticeToast, UpdateBanner } from './App'
 import { SettingsPopoverWindow } from './components/SessionOverlay'
 import { TooltipView } from './components/TooltipView'
+import { MicSelectorView } from './components/MicSelectorView'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import './index.css'
 
@@ -14,6 +15,7 @@ const view = new URLSearchParams(window.location.search).get('view')
 function Root() {
   if (view === 'tooltip') return <TooltipView />
   if (view === 'popover') return <SettingsPopoverWindow />
+  if (view === 'mic-selector') return <MicSelectorView />
   return <><App /><FocusToast /><AuthNoticeToast /><UpdateBanner /></>
 }
 

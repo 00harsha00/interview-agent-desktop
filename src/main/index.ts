@@ -377,6 +377,96 @@ function hideTooltip(): void {
   tooltipWindow?.hide()
 }
 
+// ─── Mic selector window — separate BrowserWindow for audio device picker ────
+let micSelectorWindow: BrowserWindow | null = null
+let micSelectorAnchor: { screenX: number; screenY: number; buttonW: number; buttonH: number; flipped: boolean } | null = null
+let micSelectorPendingData: { devices: { id: string; label: string; type: string }[]; selectedId?: string } | null = null
+let micSelectorJustShownAt = 0
+const MIC_SEL_W = 240
+const MIC_SEL_EDGE_MARGIN = 8
+
+function createMicSelectorWindow(): void {
+  micSelectorWindow = new BrowserWindow({
+    width: MIC_SEL_W,
+    height: 200,
+    x: -10000, y: -10000,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    roundedCorners: false,
+    resizable: false,
+    movable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: !IS_DEV,
+      backgroundThrottling: false,
+    },
+  })
+  micSelectorWindow.setContentProtection(CONTENT_PROTECTION)
+  micSelectorWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  micSelectorWindow.setAlwaysOnTop(true, 'screen-saver', 1)
+  micSelectorWindow.setIgnoreMouseEvents(false)
+
+  const micSelUrl = IS_DEV && RENDERER_DEV_URL ? `${RENDERER_DEV_URL}?view=mic-selector` : null
+  if (micSelUrl) {
+    micSelectorWindow.loadURL(micSelUrl)
+  } else {
+    micSelectorWindow.loadFile(join(__dirname, '../renderer/index.html'), { query: { view: 'mic-selector' } })
+  }
+
+  micSelectorWindow.webContents.once('did-finish-load', () => {
+    if (micSelectorPendingData) {
+      micSelectorWindow?.webContents.send('mic:devices', micSelectorPendingData)
+    }
+  })
+
+  micSelectorWindow.on('blur', () => {
+    const sinceShown = Date.now() - micSelectorJustShownAt
+    if (sinceShown < POPOVER_BLUR_GRACE_MS) return
+    hideMicSelector()
+  })
+  micSelectorWindow.on('closed', () => { micSelectorWindow = null })
+}
+
+function positionMicSelectorWindow(deviceCount: number): void {
+  if (!micSelectorWindow || !micSelectorAnchor) return
+  const { screenX, screenY, buttonW, buttonH, flipped } = micSelectorAnchor
+  const display = screen.getDisplayMatching({ x: Math.round(screenX), y: Math.round(screenY), width: 1, height: 1 })
+  const wa = display.workArea
+
+  const itemH = 36
+  const headerH = 28
+  const paddingH = 12
+  const h = Math.round(Math.max(60, headerH + paddingH + deviceCount * itemH))
+
+  let x = Math.round(screenX + buttonW / 2 - MIC_SEL_W / 2)
+  x = Math.max(wa.x + MIC_SEL_EDGE_MARGIN, Math.min(x, wa.x + wa.width - MIC_SEL_W - MIC_SEL_EDGE_MARGIN))
+
+  let y: number
+  if (flipped) {
+    y = Math.max(wa.y + MIC_SEL_EDGE_MARGIN, screenY - h - MIC_SEL_EDGE_MARGIN)
+  } else {
+    y = screenY + buttonH + MIC_SEL_EDGE_MARGIN
+    y = Math.min(y, wa.y + wa.height - h - MIC_SEL_EDGE_MARGIN)
+    y = Math.max(wa.y + MIC_SEL_EDGE_MARGIN, y)
+  }
+
+  micSelectorWindow.setBounds({ x, y, width: MIC_SEL_W, height: h })
+}
+
+function hideMicSelector(): void {
+  if (!micSelectorWindow) return
+  micSelectorWindow.hide()
+  mainWindow?.webContents.send('mic:selector-closed')
+}
+
 // ─── Window factory ───────────────────────────────────────────────────────────
 // ─── Snap-position persistence (main-side, so the window is born in place) ────
 const SNAP_MARGIN = 8
@@ -994,6 +1084,37 @@ function registerIPC(): void {
   })
   ipcMain.on('tooltip:hide', () => hideTooltip())
 
+  // ── Mic selector IPC ─────────────────────────────────────────────────────────
+  ipcMain.handle('mic:show-selector', (_e, data: {
+    x: number; y: number; width: number; height: number; flipped: boolean
+    devices: { id: string; label: string; type: string }[]; selectedId?: string
+  }) => {
+    if (!mainWindow) return
+    if (!micSelectorWindow || micSelectorWindow.isDestroyed()) {
+      createMicSelectorWindow()
+    }
+    const mainBounds = mainWindow.getBounds()
+    micSelectorAnchor = {
+      screenX: mainBounds.x + data.x,
+      screenY: mainBounds.y + data.y,
+      buttonW: data.width,
+      buttonH: data.height,
+      flipped: data.flipped,
+    }
+    micSelectorPendingData = { devices: data.devices, selectedId: data.selectedId }
+    positionMicSelectorWindow(data.devices.length)
+    micSelectorJustShownAt = Date.now()
+    micSelectorWindow!.setAlwaysOnTop(true, 'screen-saver', 1)
+    micSelectorWindow!.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    micSelectorWindow!.show()
+    micSelectorWindow!.webContents.send('mic:devices', micSelectorPendingData)
+  })
+  ipcMain.on('mic:hide-selector', () => hideMicSelector())
+  ipcMain.on('mic:select-device', (_e, deviceId: string) => {
+    mainWindow?.webContents.send('mic:device-selected', deviceId)
+    hideMicSelector()
+  })
+
   ipcMain.handle('window:set-size', (_e, w: number, h: number) => {
     if (!mainWindow) return
     mainWindow.setSize(Math.round(w), Math.round(h), false)
@@ -1015,6 +1136,7 @@ function registerIPC(): void {
     mainWindow?.setContentProtection(on)
     popoverWindow?.setContentProtection(on)
     tooltipWindow?.setContentProtection(on)
+    micSelectorWindow?.setContentProtection(on)
   })
 
   // Position presets — 6 snap positions with 8px margins from the work area.

@@ -44,6 +44,16 @@ const electronAPI = {
     hide: () => ipcRenderer.send('tooltip:hide'),
   },
 
+  // Mic selector — separate BrowserWindow for audio device picker
+  mic: {
+    showSelector: (data: {
+      x: number; y: number; width: number; height: number; flipped: boolean
+      devices: { id: string; label: string; type: string }[]; selectedId?: string
+    }) => ipcRenderer.invoke('mic:show-selector', data),
+    hideSelector: () => ipcRenderer.send('mic:hide-selector'),
+    selectDevice: (deviceId: string) => ipcRenderer.send('mic:select-device', deviceId),
+  },
+
   // App info
   app: {
     version:  () => ipcRenderer.invoke('app:version') as Promise<string>,
@@ -103,6 +113,9 @@ const electronAPI = {
       'display:moved-to-primary',
       'display:list-changed',
       'tooltip:update',
+      'mic:devices',
+      'mic:device-selected',
+      'mic:selector-closed',
       'update:available',
       'update:ready',
     ])

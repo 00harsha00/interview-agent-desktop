@@ -176,7 +176,7 @@ function Tooltip({ text, children, flipped = false }: { text: string; children: 
   )
 }
 
-/** Primary answer button — exact design spec */
+/** Primary answer button — Option D design spec */
 function AnswerBtn({ disabled, onClick, streaming }: { disabled?: boolean; onClick: () => void; streaming?: boolean }) {
   return (
     <button
@@ -185,29 +185,31 @@ function AnswerBtn({ disabled, onClick, streaming }: { disabled?: boolean; onCli
       className={cn(
         'flex items-center justify-center gap-1.5 select-none transition-all',
         'disabled:opacity-30 disabled:cursor-not-allowed text-white',
-        streaming ? 'cursor-wait' : 'hover:brightness-110 active:scale-[0.98]',
+        streaming ? 'cursor-wait' : 'active:scale-[0.98]',
       )}
       style={{
         background: '#16a34a',
-        padding: '4px 12px',
+        padding: '7px 18px',
         borderRadius: 7,
         fontWeight: 500,
-        fontSize: 12,
+        fontSize: 14,
         flexShrink: 0,
       }}
+      onMouseOver={(e) => { if (!disabled && !streaming) e.currentTarget.style.background = '#15803d' }}
+      onMouseOut={(e) => { e.currentTarget.style.background = '#16a34a' }}
     >
       {streaming ? (
-        <svg style={{ width: 15, height: 15 }} className="animate-spin opacity-70" fill="none" viewBox="0 0 24 24">
+        <svg style={{ width: 17, height: 17 }} className="animate-spin opacity-70" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3.5" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
       ) : (
-        <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
+        <svg style={{ width: 17, height: 17 }} fill="currentColor" viewBox="0 0 20 20">
           <path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" />
         </svg>
       )}
       Answer
-      <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘↵</span>
+      <span style={{ fontFamily: 'monospace', fontSize: 10, opacity: 0.5 }}>⌘↵</span>
     </button>
   )
 }
@@ -2366,30 +2368,68 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             streaming={p.isStreaming}
           />
         </Tooltip>
-        {/* 6. SCREENSHOT */}
-        <Tooltip text="Screenshot ⌘⇧↵" flipped={flipped}>
-          <TBtn onClick={() => p.onScreenshot(true)}>
-            <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        {/* 6. SCREENSHOT — pill-style */}
+        <Tooltip text="Screenshot" flipped={flipped}>
+          <button
+            onClick={() => p.onScreenshot(true)}
+            className="flex items-center select-none transition-all flex-shrink-0"
+            style={{
+              gap: 6,
+              padding: '6px 12px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 8,
+              color: 'rgba(255,255,255,0.65)',
+              cursor: 'pointer',
+            }}
+            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+            onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
+          >
+            <svg style={{ width: 17, height: 17 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘⇧↵</span>
-          </TBtn>
+            <span style={{ fontSize: 13 }}>Screenshot</span>
+            <span style={{
+              fontFamily: 'monospace', fontSize: 10, opacity: 0.45,
+              background: 'rgba(255,255,255,0.08)', borderRadius: 4,
+              padding: '2px 6px',
+            }}>⌘⇧↵</span>
+          </button>
         </Tooltip>
-        {/* 7. CHAT */}
-        <Tooltip text="Chat ⌘⇧-" flipped={flipped}>
-          <TBtn active={p.showChat} onClick={p.onToggleChat}>
-            <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        {/* 7. CHAT — pill-style */}
+        <Tooltip text="Chat" flipped={flipped}>
+          <button
+            onClick={p.onToggleChat}
+            className="flex items-center select-none transition-all flex-shrink-0"
+            style={{
+              gap: 6,
+              padding: '6px 12px',
+              background: p.showChat ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 8,
+              color: p.showChat ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)',
+              cursor: 'pointer',
+            }}
+            onMouseOver={(e) => { if (!p.showChat) { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' } }}
+            onMouseOut={(e) => { if (!p.showChat) { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' } }}
+          >
+            <svg style={{ width: 17, height: 17 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
-            <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘⇧-</span>
+            <span style={{ fontSize: 13 }}>Chat</span>
+            <span style={{
+              fontFamily: 'monospace', fontSize: 10, opacity: 0.45,
+              background: 'rgba(255,255,255,0.08)', borderRadius: 4,
+              padding: '2px 6px',
+            }}>⌘⇧-</span>
             {p.showAnswer && p.qaPairsCount > 0 && (
               <span className="ml-0.5 rounded-full text-white flex items-center justify-center"
                     style={{ height: 14, minWidth: 14, padding: '0 3px', fontSize: 8, fontWeight: 700, background: 'rgba(34,197,94,0.8)' }}>
                 {p.qaPairsCount}
               </span>
             )}
-          </TBtn>
+          </button>
         </Tooltip>
 
         {/* ── SPACER ── */}
