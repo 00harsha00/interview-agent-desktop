@@ -1,12 +1,14 @@
 // ─── URLs ─────────────────────────────────────────────────────────────────────
-// Configured via .env.development / .env.production (VITE_API_BASE_URL).
-// Baked into the bundle at build time from .env.production (permanent Railway/Vercel URLs).
-// In dev: backend runs on :3000, frontend (Next.js dashboard) on :4000.
+// Baked at build time from .env.development (local) or .env.production (Fly.io).
+// Production: https://interview-agent-backend-vnrl-a.fly.dev
+// Local dev:  http://localhost:3000  (set in .env.development)
 export const BACKEND_URL =
   import.meta.env.VITE_API_BASE_URL ??
-  import.meta.env.VITE_BACKEND_URL ??      // legacy name, still honored
-  'http://localhost:3000'
-export const FRONTEND_URL = import.meta.env.VITE_FRONTEND_URL ?? 'http://localhost:4000'
+  import.meta.env.VITE_BACKEND_URL ??
+  'https://interview-agent-backend-vnrl-a.fly.dev'
+export const FRONTEND_URL =
+  import.meta.env.VITE_FRONTEND_URL ??
+  'https://interview-agent-frontend-chi.vercel.app'
 
 // ─── Speechmatics ─────────────────────────────────────────────────────────────
 export const SM_RT_URL = 'wss://eu2.rt.speechmatics.com/v2'

@@ -25,9 +25,9 @@ const HIDE_DOCK_ICON     = !IS_DEV  // app hidden from the macOS dock
 // Backend/frontend base URLs — baked in at build time from .env.production /
 // .env.development (VITE_ prefix is shared with the main process by electron-vite).
 const BACKEND_URL: string =
-  import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_BACKEND_URL ?? 'http://localhost:3000'
+  import.meta.env.VITE_API_BASE_URL ?? import.meta.env.VITE_BACKEND_URL ?? 'https://interview-agent-backend-vnrl-a.fly.dev'
 const FRONTEND_URL: string =
-  import.meta.env.VITE_FRONTEND_URL ?? 'http://localhost:4000'
+  import.meta.env.VITE_FRONTEND_URL ?? 'https://interview-agent-frontend-chi.vercel.app'
 // NextAuth uses secure cookies on HTTPS: the session cookie is named
 // "__Secure-next-auth.session-token" in production (https backend) but plain
 // "next-auth.session-token" in dev (http). Pick the right name accordingly.
