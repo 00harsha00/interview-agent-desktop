@@ -18,7 +18,7 @@ const electronAPI = {
     setIgnoreMouse: (v: boolean) => ipcRenderer.invoke('window:set-ignore-mouse', v),
     setContentProtection: (v: boolean) => ipcRenderer.invoke('window:set-content-protection', v),
     setPosition:    (x: number, y: number) => ipcRenderer.invoke('window:set-position', x, y) as Promise<{ x: number; y: number }>,
-    moveTo:         (pos: string) => ipcRenderer.invoke('window:move-to', pos),
+    moveTo:         (pos: string, keepCurrentSize?: boolean) => ipcRenderer.invoke('window:move-to', pos, keepCurrentSize),
     getDisplays:    () => ipcRenderer.invoke('window:get-displays') as Promise<{
       displays: Array<{ id: number; label: string; bounds: Electron.Rectangle; isPrimary: boolean }>
       currentId: number

@@ -14,6 +14,7 @@
 import React, {
   useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
 import { cn } from '@/lib/utils'
@@ -72,7 +73,7 @@ function Kbd({ s }: { s: string }) {
 }
 
 function Sep() {
-  return <div className="w-px h-4 flex-shrink-0" style={{ background: 'rgba(255,255,255,0.1)' }} />
+  return <div className="flex-shrink-0" style={{ width: 1, height: 15, background: 'rgba(255,255,255,0.08)', margin: '0 2px' }} />
 }
 
 /** Bold collapse chevron — heavier and larger than a plain "∧" glyph */
@@ -121,15 +122,10 @@ export function WaveformBars({ active }: { active: boolean }) {
         <div
           key={i}
           style={{
-            width: 2.5,
+            width: 2,
             borderRadius: 2,
             height: active ? undefined : EQ_BAR_STATIC_H,
-            // Ghost/frosted white — no drop-shadow/glow filter: on a fully
-            // transparent Electron window a glow filter has the same
-            // "blurring nothing" risk that's produced white-halo artifacts
-            // elsewhere in this app, so the bars stay a plain translucent
-            // fill only, brighter while animating, dimmer when static.
-            background: active ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.4)',
+            background: active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.35)',
             animation: active ? `eqBar${i} ${b.duration}s ease-in-out ${b.delay}s infinite` : 'none',
             transition: 'height 0.2s ease, background-color 0.2s ease',
           }}
@@ -139,97 +135,104 @@ export function WaveformBars({ active }: { active: boolean }) {
   )
 }
 
-function LogoWaveform({ active }: { active: boolean }) {
-  return (
-    <div
-      className="h-5 w-5 rounded-lg flex items-center justify-center flex-shrink-0"
-      style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 2px 6px rgba(99,102,241,0.35)' }}
-    >
-      <WaveformBars active={active} />
-    </div>
-  )
-}
-
 /** Red dot badge for audio icons */
 function Dot({ color = 'red' }: { color?: 'red' | 'green' }) {
   return (
     <span
-      className={cn(
-        'absolute -top-[2px] -right-[2px] h-[7px] w-[7px] rounded-full',
-        color === 'red' ? 'bg-red-500' : 'bg-green-400',
-      )}
-      style={{ boxShadow: color === 'red' ? '0 0 0 1.5px rgba(8,8,12,0.9)' : '0 0 0 1.5px rgba(8,8,12,0.9)' }}
+      className="absolute -top-[1px] -right-[1px] rounded-full"
+      style={{
+        width: 5, height: 5,
+        background: color === 'red' ? '#ef4444' : '#22c55e',
+        boxShadow: '0 0 0 1.5px rgba(10,10,14,0.9)',
+      }}
     />
   )
 }
 
-/** Custom tooltip — position:fixed via getBoundingClientRect */
+/** Portal-based tooltip — rendered into document.body so it's never clipped by
+ *  parent overflow or the Electron window bounds. */
 function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
-  const [show, setShow] = useState(false)
-  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const [visible, setVisible] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
   const ref = useRef<HTMLDivElement>(null)
   return (
     <div
       ref={ref}
       onMouseEnter={() => {
         const rect = ref.current?.getBoundingClientRect()
-        if (rect) { setPos({ x: rect.left + rect.width / 2, y: rect.top }); setShow(true) }
+        if (rect) {
+          setPos({ top: rect.top - 8, left: rect.left + rect.width / 2 })
+          setVisible(true)
+        }
       }}
-      onMouseLeave={() => setShow(false)}
-      style={{ display: 'inline-flex', position: 'relative' }}
+      onMouseLeave={() => setVisible(false)}
+      style={{ display: 'inline-flex' }}
     >
       {children}
-      {show && (
+      {visible && createPortal(
         <div style={{
-          position: 'fixed', left: pos.x, top: pos.y - 4,
+          position: 'fixed',
+          top: pos.top,
+          left: pos.left,
           transform: 'translate(-50%, -100%)',
-          background: 'rgba(0,0,0,0.88)', color: 'rgba(255,255,255,0.9)',
-          fontSize: 10, padding: '3px 7px', borderRadius: 5,
-          whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 9999,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          background: 'rgba(10,10,14,0.97)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 7,
+          padding: '4px 8px',
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.9)',
+          whiteSpace: 'nowrap',
+          zIndex: 99999,
+          pointerEvents: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
         }}>
           {text}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
 }
 
-/** Primary answer-style button (subtle green glow) */
-function AnswerBtn({ disabled, onClick, streaming, title }: { disabled?: boolean; onClick: () => void; streaming?: boolean; title?: string }) {
+/** Primary answer button — exact design spec */
+function AnswerBtn({ disabled, onClick, streaming }: { disabled?: boolean; onClick: () => void; streaming?: boolean }) {
   return (
     <button
-      title={title}
       onClick={() => onClick()}
       disabled={disabled}
       className={cn(
-        'flex items-center justify-center gap-1.5 px-3 h-8 rounded-xl text-[13px] font-bold select-none transition-all',
+        'flex items-center justify-center gap-1.5 select-none transition-all',
         'disabled:opacity-30 disabled:cursor-not-allowed text-white',
         streaming ? 'cursor-wait' : 'hover:brightness-110 active:scale-[0.98]',
       )}
       style={{
-        background: 'linear-gradient(135deg,#16a34a,#22c55e)',
-        boxShadow: '0 2px 10px rgba(34,197,94,0.35), inset 0 0 0 1px rgba(255,255,255,0.15)',
-        minWidth: 118,   // fixed footprint — never moves or resizes with state
+        background: '#16a34a',
+        padding: '4px 12px',
+        borderRadius: 7,
+        fontWeight: 500,
+        fontSize: 12,
         flexShrink: 0,
-      } as React.CSSProperties}
+      }}
     >
       {streaming ? (
-        <svg className="h-3 w-3 animate-spin opacity-70" fill="none" viewBox="0 0 24 24">
+        <svg style={{ width: 15, height: 15 }} className="animate-spin opacity-70" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3.5" />
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
         </svg>
       ) : (
-        <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+        <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
           <path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" />
         </svg>
       )}
-      Answer <Kbd s="⌘↵" />
+      Answer
+      <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘↵</span>
     </button>
   )
 }
 
-/** Standard toolbar pill button */
+/** Toolbar button — spec hover: bg rgba(255,255,255,0.07), color 0.9, radius 6px */
 function TBtn({
   children, onClick, active = false, disabled = false,
 }: {
@@ -240,17 +243,17 @@ function TBtn({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'flex items-center gap-1 px-2 h-7 rounded-lg text-[11.5px] font-medium select-none transition-all flex-shrink-0',
+        'flex items-center gap-1 select-none transition-all flex-shrink-0',
         'disabled:opacity-25 disabled:cursor-not-allowed',
-        active
-          ? 'text-white'
-          : 'text-white/70 hover:text-white/90',
       )}
       style={{
-        background: active ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.065)',
-        boxShadow: active ? 'inset 0 0 0 1px rgba(255,255,255,0.22)' : 'inset 0 0 0 1px rgba(255,255,255,0.1)',
-        WebkitAppRegion: 'no-drag',
-      } as React.CSSProperties}
+        padding: '4px 7px',
+        borderRadius: 6,
+        color: active ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)',
+        background: active ? 'rgba(255,255,255,0.1)' : 'transparent',
+      }}
+      onMouseOver={(e) => { if (!active) { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' } }}
+      onMouseOut={(e) => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' } }}
     >
       {children}
     </button>
@@ -259,36 +262,35 @@ function TBtn({
 
 /** Icon-only toolbar button */
 function IBtn({
-  onClick, children, title = '', className = '',
+  onClick, children, className = '',
   onClickWithRect, disabled = false,
 }: {
   onClick?: () => void
   children: React.ReactNode
-  title?: string
   className?: string
   disabled?: boolean
   onClickWithRect?: (rect: DOMRect) => void
 }) {
   return (
     <button
-      title={title}
       disabled={disabled}
       onClick={(e) => {
         if (disabled) return
         if (onClickWithRect) {
-          e.stopPropagation()   // prevent document 'click' listener from closing the menu
+          e.stopPropagation()
           onClickWithRect(e.currentTarget.getBoundingClientRect())
         } else {
           onClick?.()
         }
       }}
-      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       className={cn(
-        'flex items-center justify-center h-7 w-7 rounded-lg text-white/40 hover:text-white/85',
-        'hover:bg-white/8 transition-all select-none',
+        'flex items-center justify-center select-none transition-all',
         disabled && 'opacity-25 cursor-not-allowed pointer-events-none',
         className,
       )}
+      style={{ padding: '4px 7px', borderRadius: 6, color: 'rgba(255,255,255,0.65)' }}
+      onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+      onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
     >
       {children}
     </button>
@@ -730,39 +732,34 @@ const SNAP_NEIGHBORS: Record<SnapPos, SnapPos[]> = {
   'bottom-right':  ['top-right', 'bottom-center'],
 }
 
-function PositionGrid({ snapPos, onMove, size = 24, gap = 3, compact = false, onAfterMove, flashPos }: {
+function PositionGrid({ snapPos, onMove, size = 12, gap = 2, onAfterMove, flashPos }: {
   snapPos: SnapPos; onMove: (p: SnapPos) => void
-  size?: number; gap?: number; compact?: boolean; onAfterMove?: () => void
+  size?: number; gap?: number; onAfterMove?: () => void
   flashPos?: SnapPos | null
 }) {
-  const neighbors = SNAP_NEIGHBORS[snapPos] ?? []
   return (
-    <div className="grid grid-cols-3" style={{ width: size * 3 + gap * 2, gap }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', width: size * 3 + gap * 2, gap, padding: '4px 5px' }}>
       {SNAP_POSITIONS.flat().map((pos) => {
         const isActive = snapPos === pos
         const isFlashing = flashPos === pos
-        const isNeighbor = neighbors.includes(pos)
-        const isDisabled = !isActive && !isNeighbor
         return (
           <button
             key={pos}
-            onClick={() => { if (!isDisabled) { onMove(pos); onAfterMove?.() } }}
+            onClick={() => { onMove(pos); onAfterMove?.() }}
             title={pos.replace('-', ' ')}
-            disabled={isDisabled}
-            className={cn(
-              'flex items-center justify-center rounded-md transition-all',
-              isDisabled && 'opacity-15 cursor-default',
-              isFlashing
-                ? 'bg-indigo-400/40 text-white ring-1 ring-indigo-300/50'
+            className="flex items-center justify-center transition-all"
+            style={{
+              width: size, height: size,
+              borderRadius: 2,
+              fontSize: Math.max(7, Math.round(size * 0.5)),
+              border: 'none', cursor: 'pointer',
+              background: isFlashing
+                ? 'rgba(99,102,241,0.6)'
                 : isActive
-                  ? 'bg-indigo-500/25 text-indigo-300 ring-1 ring-indigo-400/30'
-                  : isNeighbor
-                    ? compact
-                      ? 'bg-white/5 text-white/40 hover:text-white/80 hover:opacity-80'
-                      : 'text-white/45 hover:text-white hover:bg-white/10'
-                    : 'bg-transparent text-white/15',
-            )}
-            style={{ width: size, height: size, fontSize: Math.max(8, Math.round(size * 0.5)) }}
+                  ? 'rgba(99,102,241,0.65)'
+                  : 'rgba(255,255,255,0.1)',
+              color: isFlashing || isActive ? '#fff' : 'rgba(255,255,255,0.3)',
+            }}
           >
             {SNAP_ICONS[pos]}
           </button>
@@ -2291,150 +2288,157 @@ interface ToolbarBarProps {
 const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
   const isMicActive = p.isRunning && p.micOn
   const isSysActive = p.isRunning && p.sysOn
-  const PANEL_BG: React.CSSProperties = { background: 'rgba(8,8,12,0.94)', backdropFilter: 'none' }
+  const audioActive = p.isRunning && (p.sysOn || p.micOn)
+
+  // Status dot color
+  let statusLabel: string; let statusDotColor: string
+  if (p.isStreaming) {
+    statusLabel = 'Answering'; statusDotColor = '#818cf8'
+  } else if (p.isRunning && p.smState === 'connected') {
+    statusLabel = 'Listening'; statusDotColor = '#22c55e'
+  } else if (p.isRunning && (p.smState === 'connecting' || p.smState === 'reconnecting')) {
+    statusLabel = 'Reconnecting'; statusDotColor = '#f59e0b'
+  } else if (p.isRunning && (p.smState === 'failed' || p.smState === 'error')) {
+    statusLabel = 'Error'; statusDotColor = '#ef4444'
+  } else {
+    statusLabel = 'Ready'; statusDotColor = 'rgba(255,255,255,0.3)'
+  }
 
   return (
     <>
-      {/* Single row, never wraps — flex-nowrap (the default) with min-width:0
-          on the truncating group below so long company names/model labels
-          ellipsis instead of forcing the row to grow or wrap. minHeight (not
-          a fixed height) leaves room for the auto-fit system to pick up any
-          small overflow without us having to hand-tune a pixel height. */}
       <div
-        className="flex flex-nowrap items-center gap-1 px-2.5 py-1 select-none overflow-hidden"
-        style={{ ...PANEL_BG, borderRadius: 0, minHeight: TOOLBAR_H, flexShrink: 0 }}
+        className="flex flex-nowrap items-center select-none"
+        style={{
+          background: 'rgba(10,10,14,0.55)',
+          borderRadius: 11,
+          border: '1px solid rgba(255,255,255,0.09)',
+          padding: '5px 8px',
+          gap: 3,
+          minHeight: TOOLBAR_H,
+          flexShrink: 0,
+        }}
       >
-        {/* Logo only — company name + model badge removed for cleaner toolbar */}
-        <Tooltip text={`${p.companyName} · ${AI_MODEL_LABELS[p.aiModel] ?? p.aiModel}`}>
-          <LogoWaveform active={p.isRunning && (p.sysOn || p.micOn)} />
+        {/* 1. WAVEFORM */}
+        <Tooltip text="Session active">
+          <div style={{ padding: '4px 6px', display: 'flex', alignItems: 'center' }}>
+            <WaveformBars active={audioActive} />
+          </div>
         </Tooltip>
         <Sep />
-        {/* Audio indicators */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          <Tooltip text={p.sysOn ? 'System audio ON' : 'System audio OFF'}>
-            <button onClick={p.onToggleSys}
-                    className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
-                      isSysActive ? 'text-red-400' : p.sysOn ? 'text-white/50 hover:text-white/80' : 'text-white/20 hover:text-white/50',
-                      isSysActive && 'bg-red-500/10')}>
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-              {p.sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
-            </button>
-          </Tooltip>
-          <Sep />
-          <Tooltip text={p.micOn ? `Mic: ${p.micDevices.find((d) => d.id === p.selectedMicId)?.label ?? 'default'}` : 'Mic OFF'}>
-            <button onClick={p.onToggleMic}
-                    className={cn('relative flex items-center justify-center h-6 w-6 rounded-lg transition-all',
-                      isMicActive ? 'text-red-400' : p.micOn ? 'text-white/50 hover:text-white/80' : 'text-white/20 hover:text-white/50',
-                      isMicActive && 'bg-red-500/10')}>
-              <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-              </svg>
-              {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
-            </button>
-          </Tooltip>
-          {/* Only shown once mic is on — picking an input device before
-              there's any capture running is meaningless, and it saves the
-              tight toolbar row the space otherwise. */}
-          {p.micOn && p.micDevices.length > 1 && (
-            <MicSelector
-              inputDevices={p.micDevices}
-              selectedInputId={p.selectedMicId}
-              onInputChange={p.onMicDeviceChange}
-              compact
-            />
-          )}
-        </div>
+        {/* 3. MIC (before system audio per spec) */}
+        <Tooltip text={p.micOn ? 'Microphone · on' : 'Microphone · off'}>
+          <button onClick={p.onToggleMic}
+            className="relative flex items-center justify-center transition-all"
+            style={{
+              padding: '4px 7px', borderRadius: 6,
+              color: p.micOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)',
+            }}
+            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+            onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = p.micOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
+          >
+            <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+            </svg>
+            {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
+          </button>
+        </Tooltip>
+        {p.micOn && p.micDevices.length > 1 && (
+          <MicSelector
+            inputDevices={p.micDevices}
+            selectedInputId={p.selectedMicId}
+            onInputChange={p.onMicDeviceChange}
+            compact
+          />
+        )}
+        {/* 4. SYSTEM AUDIO */}
+        <Tooltip text={isSysActive ? 'System audio · recording' : 'System audio · off'}>
+          <button onClick={p.onToggleSys}
+            className="relative flex items-center justify-center transition-all"
+            style={{
+              padding: '4px 7px', borderRadius: 6,
+              color: p.sysOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)',
+            }}
+            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+            onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = p.sysOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
+          >
+            <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            {p.sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
+          </button>
+        </Tooltip>
         <Sep />
-        <AnswerBtn
-          onClick={p.onAnswer}
-          disabled={!p.isRunning || !p.isOnline}
-          streaming={p.isStreaming}
-          title={!p.isOnline ? 'No internet connection' : undefined}
-        />
-        <Tooltip text="Screenshot">
+        {/* 6. ANSWER */}
+        <Tooltip text="Generate answer ⌘↵">
+          <AnswerBtn
+            onClick={p.onAnswer}
+            disabled={!p.isRunning || !p.isOnline}
+            streaming={p.isStreaming}
+          />
+        </Tooltip>
+        {/* 7. SCREENSHOT */}
+        <Tooltip text="Screenshot ⌘⇧↵">
           <TBtn onClick={() => p.onScreenshot(true)}>
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            <Kbd s="⌘⇧↵" />
+            <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘⇧↵</span>
           </TBtn>
         </Tooltip>
-        <Tooltip text="Chat">
+        {/* 8. CHAT */}
+        <Tooltip text="Chat ⌘⇧-">
           <TBtn active={p.showChat} onClick={p.onToggleChat}>
-            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
-            <Kbd s="⌘⇧—" />
+            <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘⇧-</span>
             {p.showAnswer && p.qaPairsCount > 0 && (
-              <span className="ml-0.5 h-4 min-w-[16px] px-1 rounded-full bg-green-500/80 text-white text-[8px] font-bold flex items-center justify-center">
+              <span className="ml-0.5 rounded-full text-white flex items-center justify-center"
+                    style={{ height: 14, minWidth: 14, padding: '0 3px', fontSize: 8, fontWeight: 700, background: 'rgba(34,197,94,0.8)' }}>
                 {p.qaPairsCount}
               </span>
             )}
           </TBtn>
         </Tooltip>
-        <div className="flex-1" />
+        <Sep />
+        {/* 10. TIMER */}
         <SessionTimer key={p.timerKey} startSeconds={p.timerStartSeconds} onExpire={p.onTimerExpire} mode={p.sessionTimerMode} timerKey={p.timerKey} />
-        {/* Mini position grid — one click to snap, no need to open the menu.
-            Kept in the hamburger menu too (see SettingsPanel) rather than
-            removed from there, since this compact copy is an addition to an
-            already-tight single-row toolbar, not guaranteed headroom. */}
-        <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={14} gap={2} compact flashPos={p.flashPos} />
-        {/* Status pill */}
-        {(() => {
-          let label: string; let bg: string; let color: string; let ring: string; let dotColor: string
-          if (p.isStreaming) {
-            label = 'Answering'; bg = 'rgba(99,102,241,0.14)'; color = '#a5b4fc'; ring = 'rgba(99,102,241,0.28)'; dotColor = '#818cf8'
-          } else if (p.isRunning && p.smState === 'connected') {
-            label = 'Listening'; bg = 'rgba(34,197,94,0.12)'; color = '#86efac'; ring = 'rgba(34,197,94,0.25)'; dotColor = '#4ade80'
-          } else if (p.isRunning && p.smState === 'connecting') {
-            label = 'Connecting'; bg = 'rgba(251,146,60,0.12)'; color = '#fdba74'; ring = 'rgba(251,146,60,0.22)'; dotColor = '#fb923c'
-          } else if (p.isRunning && p.smState === 'reconnecting') {
-            label = 'Reconnecting…'; bg = 'rgba(251,191,36,0.14)'; color = '#fde68a'; ring = 'rgba(251,191,36,0.28)'; dotColor = '#fbbf24'
-          } else if (p.isRunning && p.smState === 'failed') {
-            label = 'Transcription lost'; bg = 'rgba(239,68,68,0.14)'; color = '#fca5a5'; ring = 'rgba(239,68,68,0.28)'; dotColor = '#f87171'
-          } else if (p.isRunning && p.smState === 'error') {
-            label = 'Error'; bg = 'rgba(239,68,68,0.12)'; color = '#fca5a5'; ring = 'rgba(239,68,68,0.22)'; dotColor = '#f87171'
-          } else {
-            label = 'Ready'; bg = 'rgba(255,255,255,0.07)'; color = 'rgba(255,255,255,0.45)'; ring = 'rgba(255,255,255,0.12)'; dotColor = 'rgba(255,255,255,0.3)'
-          }
-          return (
-            <Tooltip text={label}>
-              <div className="flex items-center justify-center h-5 w-5 rounded-lg flex-shrink-0"
-                   style={{ background: bg, boxShadow: `inset 0 0 0 1px ${ring}` }}>
-                <span className="h-2 w-2 rounded-full flex-shrink-0"
-                      style={{ background: dotColor, animation: (p.isRunning && (p.smState === 'connected' || p.smState === 'reconnecting')) || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none' }} />
-              </div>
-            </Tooltip>
-          )
-        })()}
-        {/* Offline indicator — network drop doesn't stop the timer or (if
-            the WebSocket is still alive) transcription, so this is purely
-            informational alongside the status pill above, not a replacement
-            for it. */}
-        {!p.isOnline && (
-          <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[11px] font-semibold flex-shrink-0 whitespace-nowrap"
-               style={{ background: 'rgba(251,191,36,0.14)', color: '#fde68a', boxShadow: 'inset 0 0 0 1px rgba(251,191,36,0.28)' }}
-               title="No internet connection — Answer is disabled until it's back">
-            ⚠ Offline
+        {/* 11. STATUS DOT */}
+        <Tooltip text={statusLabel}>
+          <div style={{ padding: '0 3px', display: 'flex', alignItems: 'center' }}>
+            <span style={{
+              width: 5, height: 5, borderRadius: '50%',
+              background: statusDotColor,
+              animation: (p.isRunning && (p.smState === 'connected' || p.smState === 'reconnecting')) || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none',
+            }} />
           </div>
+        </Tooltip>
+        {!p.isOnline && (
+          <Tooltip text="No internet — Answer disabled">
+            <span style={{ fontSize: 11, color: '#fde68a', fontWeight: 600 }}>⚠</span>
+          </Tooltip>
         )}
-        <Tooltip text={p.showSettings ? 'Close menu' : 'Menu'}>
+        {/* 12. POSITION GRID */}
+        <Tooltip text="Move window ⌘⇧↑↓←→">
+          <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={12} gap={2} flashPos={p.flashPos} />
+        </Tooltip>
+        {/* 13. HAMBURGER */}
+        <Tooltip text="Settings">
           <IBtn onClickWithRect={p.onSettingsClick}
                 className={p.showSettings ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/30' : ''}>
-            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+            <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
               <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4zM10 12a2 2 0 100 4 2 2 0 000-4z" />
             </svg>
           </IBtn>
         </Tooltip>
-        <Tooltip text="Collapse ⌃⌘H">
-          <IBtn onClick={p.onHide} className="opacity-85 hover:opacity-100">
+        {/* 14. COLLAPSE */}
+        <Tooltip text="Hide ⌃⌘H">
+          <IBtn onClick={p.onHide}>
             <ChevronUp />
+            <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38, marginLeft: 2 }}>⌃⌘H</span>
           </IBtn>
         </Tooltip>
-        <Kbd s="⌃⌘H" />
       </div>
     </>
   )

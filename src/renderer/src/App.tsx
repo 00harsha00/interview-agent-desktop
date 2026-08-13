@@ -229,9 +229,6 @@ export function UpdateBanner() {
 // When a session is running (endsAt set), shows a pulsing red "recording/billing"
 // dot plus the live countdown so the user always knows credits are being spent.
 function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active: boolean; endsAt: number | null }) {
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const positionRef = useRef({ x: 0, y: 0 })
   const [now, setNow] = useState(() => Date.now())
 
   const showTimer = active && endsAt !== null
@@ -248,110 +245,31 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
 
   useEffect(() => {
     window.electronAPI.window.setSize(showTimer ? 130 : 48, 48)
+    window.electronAPI.window.moveTo(
+      localStorage.getItem('overlay-snap-pos') || 'top-center',
+      true,
+    )
   }, [showTimer])
-
-  useEffect(() => {
-    // Load saved position from localStorage (once, on entering mini mode).
-    // Main clamps this to a valid display — sync back whatever it actually
-    // used (it may differ from the raw saved value, e.g. after a display
-    // was removed) so a subsequent drag doesn't jump from a stale base.
-    const saved = localStorage.getItem('minibar-position')
-    if (saved) {
-      try {
-        const pos = JSON.parse(saved)
-        positionRef.current = pos
-        window.electronAPI.window.setPosition(pos.x, pos.y).then((clamped) => {
-          if (!clamped) return
-          positionRef.current = clamped
-          if (clamped.x !== pos.x || clamped.y !== pos.y) {
-            localStorage.setItem('minibar-position', JSON.stringify(clamped))
-          }
-        }).catch(() => {})
-      } catch (e) {
-        console.warn('Failed to restore minibar position:', e)
-      }
-    }
-  }, [])
-
-  const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (e.button !== 0) return // only left click
-    setIsDragging(true)
-    // Get current window position
-    // We'll track movement relative to the click point
-    setDragOffset({ x: e.clientX, y: e.clientY })
-  }
-
-  useEffect(() => {
-    if (!isDragging) return
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaX = e.clientX - dragOffset.x
-      const deltaY = e.clientY - dragOffset.y
-      positionRef.current.x += deltaX
-      positionRef.current.y += deltaY
-      setDragOffset({ x: e.clientX, y: e.clientY })
-      window.electronAPI.window.setPosition(positionRef.current.x, positionRef.current.y)
-    }
-
-    const handleMouseUp = () => {
-      setIsDragging(false)
-      // One final authoritative setPosition call so whatever gets PERSISTED
-      // is always the clamped, on-screen value — intermediate drag events
-      // (fire-and-forget, see handleMouseMove) could otherwise leave
-      // positionRef holding a position past an edge that main silently
-      // clamped without the renderer's copy catching up.
-      window.electronAPI.window.setPosition(positionRef.current.x, positionRef.current.y)
-        .then((clamped) => { if (clamped) positionRef.current = clamped })
-        .catch(() => {})
-        .finally(() => {
-          localStorage.setItem('minibar-position', JSON.stringify(positionRef.current))
-        })
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [isDragging, dragOffset])
 
   return (
     <button
       data-overlay
-      onMouseDown={handleMouseDown}
       onClick={onRestore}
       title={showTimer ? 'Session running — click to expand' : 'Expand overlay'}
       className="relative select-none transition-all hover:scale-105 active:scale-95 flex items-center"
       style={{
-        // Glossy brand-color glass pill. Brand color = indigo #6366f1 →
-        // violet #8b5cf6 (the same gradient as the app icon/logo and every
-        // other accent in the app — see resources/icon.svg and
-        // tailwind.config's "accent-primary/secondary" — NOT the Answer
-        // button's green, which tailwind.config itself labels "legacy...
-        // for backwards compatibility" rather than the brand identity).
-        //
-        // No boxShadow/filter/backdropFilter anywhere on this pill: it's the
-        // only content on screen in front of a fully transparent Electron
-        // window (transparent:true), so there's nothing real behind it for a
-        // blur/shadow to composite against — that's the mechanism behind the
-        // recurring "white ring/halo" reports. Opacity and a plain border
-        // carry the depth instead.
         background: 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(139,92,246,0.92) 100%)',
         border: '1px solid rgba(139,92,246,0.6)',
         borderRadius: 999,
         padding: '6px 14px',
         gap: 8,
-        cursor: isDragging ? 'grabbing' : 'grab',
+        cursor: 'pointer',
         userSelect: 'none',
       } as React.CSSProperties}
     >
       <span className="relative flex items-center flex-shrink-0">
         <WaveformBars active={active} />
         {showTimer && (
-          // Recording/billing indicator — session is live and charging.
-          // Only shown once a session is actually running; otherwise the
-          // waveform's own static/animating state is the only status cue.
           <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
         )}
       </span>

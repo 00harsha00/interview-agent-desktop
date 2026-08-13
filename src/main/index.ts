@@ -359,20 +359,21 @@ function computeSnapXY(
 
 /** Shared snap logic — used by both the window:move-to IPC handler (UI
  *  clicks) and the global snap-position keyboard shortcuts. */
-function moveToSnap(pos: string): void {
+function moveToSnap(pos: string, keepCurrentSize = false): void {
   if (!mainWindow) return
-  // Popover's anchor is a screen-coordinate snapshot from open time — moving
-  // the main window invalidates it, so close it rather than leave it
-  // floating wherever it was, disconnected from the button that opened it.
   hidePopoverWindow()
-  // Snap relative to whichever display the window is CURRENTLY on — not
-  // always the primary. Re-detected fresh on every call (not cached), so
-  // it's automatically correct after a Screen-selector move to another display.
   const currentDisplay = screen.getDisplayMatching(mainWindow.getBounds())
   const wa = currentDisplay.workArea
-  const w = Math.min(appWidth, wa.width - 2 * SNAP_MARGIN)
-  const [, h] = mainWindow.getSize()
-  mainWindow.setSize(w, h, false)
+  const [curW, curH] = mainWindow.getSize()
+  let w: number, h: number
+  if (keepCurrentSize) {
+    w = curW
+    h = curH
+  } else {
+    w = Math.min(appWidth, wa.width - 2 * SNAP_MARGIN)
+    h = curH
+    mainWindow.setSize(w, h, false)
+  }
   const [x, y] = computeSnapXY(pos, w, h, wa)
   mainWindow.setPosition(x, y, true)
   saveSnapPos(pos)
@@ -949,8 +950,8 @@ function registerIPC(): void {
   // Position presets — 6 snap positions with 8px margins from the work area.
   // Width is fixed: re-apply it on every snap so the overlay stays anchored.
   // The chosen position is persisted main-side so the next launch is born there.
-  ipcMain.handle('window:move-to', (_e, pos: string) => {
-    moveToSnap(pos)
+  ipcMain.handle('window:move-to', (_e, pos: string, keepCurrentSize?: boolean) => {
+    moveToSnap(pos, keepCurrentSize)
   })
 
   // ── Multi-monitor: list displays + move the window to one ────────────────────

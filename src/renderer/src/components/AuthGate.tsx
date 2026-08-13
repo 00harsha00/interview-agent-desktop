@@ -11,39 +11,25 @@ const SNAP_ICONS: Record<string, string> = {
   'top-left': '↖', 'top-center': '↑', 'top-right': '↗',
   'bottom-left': '↙', 'bottom-center': '↓', 'bottom-right': '↘',
 }
-const SNAP_NEIGHBORS: Record<SnapPos, SnapPos[]> = {
-  'top-left':      ['top-center', 'bottom-left'],
-  'top-center':    ['top-left', 'top-right', 'bottom-center'],
-  'top-right':     ['top-center', 'bottom-right'],
-  'bottom-left':   ['top-left', 'bottom-center'],
-  'bottom-center': ['bottom-left', 'bottom-right', 'top-center'],
-  'bottom-right':  ['top-right', 'bottom-center'],
-}
 function MiniPositionGrid({ snapPos, onMove, size = 14, gap = 2 }: {
   snapPos: SnapPos; onMove: (p: SnapPos) => void; size?: number; gap?: number
 }) {
-  const neighbors = SNAP_NEIGHBORS[snapPos] ?? []
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', width: size * 3 + gap * 2, gap }}>
       {SNAP_POSITIONS.flat().map((pos) => {
         const isActive = snapPos === pos
-        const isNeighbor = neighbors.includes(pos)
-        const isDisabled = !isActive && !isNeighbor
         return (
           <button
             key={pos}
-            onClick={() => { if (!isDisabled) onMove(pos) }}
-            disabled={isDisabled}
+            onClick={() => onMove(pos)}
             title={pos.replace('-', ' ')}
             style={{
               width: size, height: size, fontSize: Math.max(8, Math.round(size * 0.5)),
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              borderRadius: 4, border: 'none', cursor: isDisabled ? 'default' : 'pointer',
+              borderRadius: 2, border: 'none', cursor: 'pointer',
               transition: 'all 0.15s',
-              opacity: isDisabled ? 0.15 : 1,
-              background: isActive ? 'rgba(99,102,241,0.25)' : 'rgba(255,255,255,0.05)',
-              color: isActive ? '#a5b4fc' : 'rgba(255,255,255,0.4)',
-              boxShadow: isActive ? 'inset 0 0 0 1px rgba(99,102,241,0.3)' : 'none',
+              background: isActive ? 'rgba(99,102,241,0.65)' : 'rgba(255,255,255,0.1)',
+              color: isActive ? '#fff' : 'rgba(255,255,255,0.3)',
             } as React.CSSProperties}
           >
             {SNAP_ICONS[pos]}
