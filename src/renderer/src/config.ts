@@ -30,4 +30,30 @@ export const AI_MODEL_LABELS: Record<string, string> = {
   CLAUDE_3_HAIKU:     'Claude Haiku',
   GEMINI_1_5_PRO:     'Gemini 1.5 Pro',
   GEMINI_1_5_FLASH:   'Gemini 1.5 Flash',
+  LLAMA_3_3_70B:      'Llama 3.3 70B',
+  QWEN_2_5_CODER:     'Qwen 2.5 Coder',
+  NEMOTRON_49B:       'Nemotron 49B',
+  LLAMA_3_1_8B:       'Llama 3.1 8B',
 }
+
+export interface ModelInfo {
+  id: string
+  name: string
+  bestFor: string
+  free: boolean
+  provider: string
+}
+
+export const MODELS: ModelInfo[] = [
+  { id: 'CLAUDE_3_5_SONNET', name: 'Claude Sonnet',    bestFor: 'Live interviews',      free: false, provider: 'Anthropic' },
+  { id: 'CLAUDE_3_HAIKU',    name: 'Claude Haiku',     bestFor: 'Fast responses',        free: false, provider: 'Anthropic' },
+  { id: 'GPT4O',             name: 'GPT-4o',           bestFor: 'Detailed answers',      free: false, provider: 'OpenAI'    },
+  { id: 'GPT4O_MINI',        name: 'GPT-4o Mini',      bestFor: 'Quick answers',         free: false, provider: 'OpenAI'    },
+  { id: 'GPT4_TURBO',        name: 'GPT-4 Turbo',      bestFor: 'Complex reasoning',     free: false, provider: 'OpenAI'    },
+  { id: 'GEMINI_1_5_PRO',    name: 'Gemini 1.5 Pro',   bestFor: 'Long context',          free: false, provider: 'Google'    },
+  { id: 'GEMINI_1_5_FLASH',  name: 'Gemini Flash',     bestFor: 'Speed + efficiency',    free: false, provider: 'Google'    },
+  { id: 'LLAMA_3_3_70B',     name: 'Llama 3.3 70B',   bestFor: 'General Q&A',           free: true,  provider: 'NVIDIA'    },
+  { id: 'QWEN_2_5_CODER',    name: 'Qwen 2.5 Coder',  bestFor: 'Coding & DSA',          free: true,  provider: 'NVIDIA'    },
+  { id: 'NEMOTRON_49B',      name: 'Nemotron 49B',     bestFor: 'Math & ML theory',      free: true,  provider: 'NVIDIA'    },
+  { id: 'LLAMA_3_1_8B',      name: 'Llama 3.1 8B',    bestFor: 'Fastest responses',     free: true,  provider: 'NVIDIA'    },
+]

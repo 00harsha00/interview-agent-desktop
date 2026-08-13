@@ -17,7 +17,7 @@ import React, {
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
 import { cn } from '@/lib/utils'
-import { SESSION_PING_MS, TRANSCRIPT_SAVE_MS, SILENCE_TRIGGER_MS, AI_MODEL_LABELS } from '@/config'
+import { SESSION_PING_MS, TRANSCRIPT_SAVE_MS, SILENCE_TRIGGER_MS, AI_MODEL_LABELS, MODELS } from '@/config'
 import {
   getSpeechmaticsJwt, updateSessionStatus, saveTranscriptions, pingSession, extendSession,
   updateSessionModel, heartbeatSession,
@@ -431,25 +431,56 @@ function SettingsPanel({
           <Toggle checked={autoGen} onChange={() => onAutoGen(!autoGen)} />
         </div>
 
-        {/* Model — compact dropdown instead of a button-per-model grid, saves
-            4-5 rows of vertical space for the same information. */}
-        <div className="flex items-center gap-3 py-1.5" style={rowDivider}>
-          <span className="text-[12px] text-white/35 flex-shrink-0 w-14">Model</span>
-          <select
-            value={aiModel}
-            onChange={(e) => onModelChange(e.target.value as AIModel)}
-            className="flex-1 px-2 py-1 rounded-lg text-[12px] outline-none cursor-pointer"
-            style={{
-              background: 'rgba(255,255,255,0.05)',
-              boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.1)',
-              color: '#ffffff',
-              appearance: 'none',
-            }}
-          >
-            {Object.entries(AI_MODEL_LABELS).map(([value, label]) => (
-              <option key={value} value={value} style={{ background: '#12121e' }}>{label}</option>
-            ))}
-          </select>
+        {/* Model — rich inline list with FREE badges and bestFor descriptions */}
+        <div className="flex flex-col gap-1 py-1.5" style={rowDivider}>
+          <span className="text-[12px] text-white/35 mb-0.5">Model</span>
+          <div style={{ maxHeight: 200, overflowY: 'auto', scrollbarWidth: 'none' }}>
+            {MODELS.map((m, i) => {
+              const isPaidSection = !m.free
+              const prevFree = i > 0 && MODELS[i - 1].free
+              const firstFree = m.free && !prevFree
+              return (
+                <React.Fragment key={m.id}>
+                  {firstFree && (
+                    <div className="flex items-center gap-2 my-1">
+                      <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Free Models</span>
+                      <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+                    </div>
+                  )}
+                  <button
+                    onClick={() => onModelChange(m.id as AIModel)}
+                    className="w-full flex items-center gap-1.5 rounded-lg transition-all"
+                    style={{
+                      padding: '4px 6px',
+                      background: aiModel === m.id ? 'rgba(99,102,241,0.15)' : 'transparent',
+                      boxShadow: aiModel === m.id ? 'inset 0 0 0 1px rgba(99,102,241,0.3)' : 'none',
+                    }}
+                    onMouseOver={(e) => { if (aiModel !== m.id) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
+                    onMouseOut={(e) => { if (aiModel !== m.id) e.currentTarget.style.background = 'transparent' }}
+                  >
+                    <span style={{ width: 12, flexShrink: 0, color: 'rgba(99,102,241,0.9)', fontSize: 11 }}>
+                      {aiModel === m.id ? '✓' : ''}
+                    </span>
+                    <span style={{ fontSize: 13, color: '#ffffff', flex: 1, textAlign: 'left' }}>{m.name}</span>
+                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontStyle: 'italic', flexShrink: 0 }}>
+                      {m.bestFor}
+                    </span>
+                    {m.free && (
+                      <span style={{
+                        fontSize: 10, fontWeight: 500,
+                        padding: '1px 6px', borderRadius: 4,
+                        background: 'rgba(34,197,94,0.15)',
+                        border: '1px solid rgba(34,197,94,0.3)',
+                        color: '#22c55e',
+                        flexShrink: 0,
+                      }}>FREE</span>
+                    )}
+                  </button>
+                </React.Fragment>
+              )
+            })}
+          </div>
         </div>
 
         {/* Text Size — controls the answer/transcript/chat reading text size,

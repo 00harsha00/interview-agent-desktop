@@ -19,7 +19,7 @@ export interface AuthUser {
 // ─── Session ──────────────────────────────────────────────────────────────────
 export type SessionMode   = 'FREE' | 'PAID'
 export type SessionStatus = 'PENDING' | 'ACTIVE' | 'ENDED'
-export type AIModel = 'GPT4O' | 'GPT4O_MINI' | 'GPT4_TURBO' | 'CLAUDE_3_5_SONNET' | 'CLAUDE_3_HAIKU' | 'GEMINI_1_5_PRO' | 'GEMINI_1_5_FLASH'
+export type AIModel = 'GPT4O' | 'GPT4O_MINI' | 'GPT4_TURBO' | 'CLAUDE_3_5_SONNET' | 'CLAUDE_3_HAIKU' | 'GEMINI_1_5_PRO' | 'GEMINI_1_5_FLASH' | 'LLAMA_3_3_70B' | 'QWEN_2_5_CODER' | 'NEMOTRON_49B' | 'LLAMA_3_1_8B'
 
 export interface CallSession {
   id: string
