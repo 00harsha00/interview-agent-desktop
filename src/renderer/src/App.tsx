@@ -245,7 +245,7 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
     : null
 
   useEffect(() => {
-    window.electronAPI.window.setSize(showTimer ? 130 : 48, 48)
+    window.electronAPI.window.setSize(showTimer ? 120 : 44, 36)
     window.electronAPI.window.moveTo(
       localStorage.getItem('overlay-snap-pos') || 'top-center',
       true,
@@ -257,25 +257,26 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
       data-overlay
       onClick={onRestore}
       title={showTimer ? 'Session running — click to expand' : 'Expand overlay'}
-      className="relative select-none transition-all hover:scale-105 active:scale-95 flex items-center"
+      className="select-none hover:scale-105 active:scale-95 flex items-center"
       style={{
-        background: 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(139,92,246,0.92) 100%)',
-        border: '1px solid rgba(139,92,246,0.6)',
-        borderRadius: 999,
-        padding: '6px 14px',
-        gap: 8,
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        gap: 6,
         cursor: 'pointer',
         userSelect: 'none',
       } as React.CSSProperties}
     >
-      <span className="relative flex items-center flex-shrink-0">
-        <img src={logoSrc} style={{ width: 20, height: 20, borderRadius: 5, objectFit: 'contain' }} />
-        {showTimer && (
-          <span className="absolute -bottom-1 -right-1 h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-        )}
-      </span>
+      <img src={logoSrc} style={{ width: 28, height: 28, objectFit: 'contain', flexShrink: 0 }} />
       {showTimer && (
-        <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 500, fontSize: 13 }} className="font-mono tabular-nums">
+        <span style={{
+          color: '#ffffff',
+          fontWeight: 500,
+          fontSize: 14,
+          fontFamily: 'monospace',
+          textShadow: '0 1px 3px rgba(0,0,0,0.8)',
+          tabularNums: 'tabular-nums',
+        } as React.CSSProperties}>
           {timerLabel}
         </span>
       )}

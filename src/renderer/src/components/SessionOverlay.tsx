@@ -91,49 +91,6 @@ function ChevronUp() {
  * don't move in lockstep) while `active` — i.e. mic or system audio is
  * actually on — and freeze at mid-height otherwise.
  */
-// Each bar gets its own min/max height range, delay, and keyframe name —
-// the asymmetric heights (10/14/16/10) plus staggered delays are what make
-// four bars read as a natural equalizer instead of four bars in lockstep.
-const EQ_BARS = [
-  { min: 3, max: 14, delay: 0,     duration: 0.9 },
-  { min: 3, max: 10, delay: 0.15,  duration: 0.7 },
-  { min: 3, max: 16, delay: 0.075, duration: 1.0 },
-  { min: 3, max: 10, delay: 0.225, duration: 0.8 },
-]
-const EQ_BAR_STATIC_H = 8
-
-/**
- * Bare animated equalizer bars — ghost/frosted-glass style, no container.
- * Exported so the collapsed mini-bar pill (App.tsx) can reuse the exact same
- * icon+animation without the toolbar's gradient-square backing.
- */
-export function WaveformBars({ active }: { active: boolean }) {
-  return (
-    <div className="flex items-end" style={{ gap: 2, height: 16 }}>
-      <style>{`
-        ${EQ_BARS.map((b, i) => `
-          @keyframes eqBar${i} {
-            0%, 100% { height: ${b.min}px; }
-            50% { height: ${b.max}px; }
-          }
-        `).join('')}
-      `}</style>
-      {EQ_BARS.map((b, i) => (
-        <div
-          key={i}
-          style={{
-            width: 2,
-            borderRadius: 2,
-            height: active ? undefined : EQ_BAR_STATIC_H,
-            background: active ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.35)',
-            animation: active ? `eqBar${i} ${b.duration}s ease-in-out ${b.delay}s infinite` : 'none',
-            transition: 'height 0.2s ease, background-color 0.2s ease',
-          }}
-        />
-      ))}
-    </div>
-  )
-}
 
 /** Red dot badge for audio icons */
 function Dot({ color = 'red' }: { color?: 'red' | 'green' }) {
