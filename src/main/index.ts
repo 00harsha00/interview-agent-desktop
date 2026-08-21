@@ -37,7 +37,7 @@ const IS_HTTPS_BACKEND = BACKEND_URL.startsWith('https://')
 const SESSION_COOKIE_NAMES = ['__Secure-next-auth.session-token', 'next-auth.session-token'] as const
 const TOOLBAR_H  = 48   // toolbar-only height
 const MODAL_H    = 340  // activation modal height
-const APP_WIDTH_MIN = 360  // never narrower, even on a tiny screen
+const APP_WIDTH_MIN = 480  // never narrower, even on a tiny screen
 const APP_WIDTH_MAX = 900  // never wider, even on a huge monitor
 // App width = 4/9 of the primary display's work-area width (clamped), computed
 // once when the app is ready (screen.getPrimaryDisplay() isn't available

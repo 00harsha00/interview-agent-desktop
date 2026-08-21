@@ -135,7 +135,9 @@ function Tooltip({ text, children, flipped = false }: { text: string; children: 
 }
 
 /** Primary answer button — Option D design spec */
-function AnswerBtn({ disabled, onClick, streaming }: { disabled?: boolean; onClick: () => void; streaming?: boolean }) {
+function AnswerBtn({ disabled, onClick, streaming, isNarrow = false, isVeryNarrow = false }: {
+  disabled?: boolean; onClick: () => void; streaming?: boolean; isNarrow?: boolean; isVeryNarrow?: boolean
+}) {
   return (
     <button
       onClick={() => onClick()}
@@ -147,7 +149,7 @@ function AnswerBtn({ disabled, onClick, streaming }: { disabled?: boolean; onCli
       )}
       style={{
         background: '#16a34a',
-        padding: '7px 18px',
+        padding: isVeryNarrow ? '7px 10px' : isNarrow ? '7px 12px' : '7px 18px',
         borderRadius: 7,
         fontWeight: 500,
         fontSize: 14,
@@ -166,8 +168,8 @@ function AnswerBtn({ disabled, onClick, streaming }: { disabled?: boolean; onCli
           <path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" />
         </svg>
       )}
-      Answer
-      <span style={{ fontFamily: 'monospace', fontSize: 10, opacity: 0.5 }}>⌘↵</span>
+      {!isVeryNarrow && 'Answer'}
+      {!isNarrow && <span style={{ fontFamily: 'monospace', fontSize: 10, opacity: 0.5 }}>⌘↵</span>}
     </button>
   )
 }
@@ -2278,6 +2280,21 @@ const AnswerPanel = React.memo(function AnswerPanel({
   )
 })
 
+// Short display names for the model badge in narrow toolbar
+const MODEL_SHORT: Record<string, string> = {
+  CLAUDE_3_5_SONNET: 'Sonnet',
+  CLAUDE_3_HAIKU:    'Haiku',
+  GPT4O:             'GPT-4o',
+  GPT4O_MINI:        '4o Mini',
+  GPT4_TURBO:        '4 Turbo',
+  GEMINI_1_5_PRO:    'Gemini Pro',
+  GEMINI_1_5_FLASH:  'Gemini',
+  LLAMA_3_3_70B:     'Llama 70B',
+  QWEN_2_5_CODER:    'Qwen',
+  NEMOTRON_49B:      'Nemotron',
+  LLAMA_3_1_8B:      'Llama 8B',
+}
+
 // ─── ToolbarBar — memo'd so streaming/transcript/timer don't re-render it ──────
 interface ToolbarBarProps {
   companyName: string
@@ -2302,6 +2319,18 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
   const audioActive = p.isRunning && (p.sysOn || p.micOn)
   const flipped = p.snapPos.startsWith('bottom')
 
+  // Responsive width measurement
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const [toolbarWidth, setToolbarWidth] = useState(700)
+  useEffect(() => {
+    if (!toolbarRef.current) return
+    const ro = new ResizeObserver((entries) => setToolbarWidth(entries[0].contentRect.width))
+    ro.observe(toolbarRef.current)
+    return () => ro.disconnect()
+  }, [])
+  const isNarrow     = toolbarWidth < 500  // hide labels, shorten model badge
+  const isVeryNarrow = toolbarWidth < 380  // icon-only for screenshot/chat, hide position grid
+
   // Status dot color
   let statusLabel: string; let statusDotColor: string
   if (p.isStreaming) {
@@ -2319,6 +2348,7 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
   return (
     <>
       <div
+        ref={toolbarRef}
         className="flex flex-nowrap items-center select-none"
         style={{
           background: 'rgba(10,10,14,0.55)',
@@ -2328,6 +2358,7 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           gap: 3,
           minHeight: TOOLBAR_H,
           flexShrink: 0,
+          overflow: 'hidden',
         }}
       >
         {/* ── LEFT GROUP: controls ── */}
@@ -2387,16 +2418,18 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             onClick={p.onAnswer}
             disabled={!p.isRunning || !p.isOnline}
             streaming={p.isStreaming}
+            isNarrow={isNarrow}
+            isVeryNarrow={isVeryNarrow}
           />
         </Tooltip>
         {/* 6. SCREENSHOT — pill-style */}
-        <Tooltip text="Screenshot" flipped={flipped}>
+        <Tooltip text="Screenshot ⌘⇧↵" flipped={flipped}>
           <button
             onClick={() => p.onScreenshot(true)}
             className="flex items-center select-none transition-all flex-shrink-0"
             style={{
-              gap: 6,
-              padding: '6px 12px',
+              gap: isVeryNarrow ? 0 : 6,
+              padding: isVeryNarrow ? '6px 8px' : '6px 12px',
               background: 'rgba(255,255,255,0.06)',
               border: '1px solid rgba(255,255,255,0.08)',
               borderRadius: 8,
@@ -2410,22 +2443,22 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            <span style={{ fontSize: 13 }}>Screenshot</span>
-            <span style={{
+            {!isNarrow && <span style={{ fontSize: 13 }}>Screenshot</span>}
+            {!isVeryNarrow && <span style={{
               fontFamily: 'monospace', fontSize: 10, opacity: 0.45,
               background: 'rgba(255,255,255,0.08)', borderRadius: 4,
               padding: '2px 6px',
-            }}>⌘⇧↵</span>
+            }}>⌘⇧↵</span>}
           </button>
         </Tooltip>
         {/* 7. CHAT — pill-style */}
-        <Tooltip text="Chat" flipped={flipped}>
+        <Tooltip text="Chat ⌘⇧-" flipped={flipped}>
           <button
             onClick={p.onToggleChat}
             className="flex items-center select-none transition-all flex-shrink-0"
             style={{
-              gap: 6,
-              padding: '6px 12px',
+              gap: isVeryNarrow ? 0 : 6,
+              padding: isVeryNarrow ? '6px 8px' : '6px 12px',
               background: p.showChat ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.06)',
               border: '1px solid rgba(255,255,255,0.08)',
               borderRadius: 8,
@@ -2438,12 +2471,12 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
             <svg style={{ width: 17, height: 17 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
-            <span style={{ fontSize: 13 }}>Chat</span>
-            <span style={{
+            {!isNarrow && <span style={{ fontSize: 13 }}>Chat</span>}
+            {!isVeryNarrow && <span style={{
               fontFamily: 'monospace', fontSize: 10, opacity: 0.45,
               background: 'rgba(255,255,255,0.08)', borderRadius: 4,
               padding: '2px 6px',
-            }}>⌘⇧-</span>
+            }}>⌘⇧-</span>}
             {p.showAnswer && p.qaPairsCount > 0 && (
               <span className="ml-0.5 rounded-full text-white flex items-center justify-center"
                     style={{ height: 14, minWidth: 14, padding: '0 3px', fontSize: 8, fontWeight: 700, background: 'rgba(34,197,94,0.8)' }}>
@@ -2478,7 +2511,9 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
         {(() => {
           const modelInfo = MODELS.find((m) => m.id === p.aiModel)
           const isFree = modelInfo?.free ?? false
-          const label = AI_MODEL_LABELS[p.aiModel] ?? p.aiModel
+          const label = isNarrow
+            ? (MODEL_SHORT[p.aiModel] ?? AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
+            : (AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
           return (
             <Tooltip text="Switch model" flipped={flipped}>
               <button
@@ -2489,24 +2524,27 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
                   color: isFree ? '#22c55e' : 'rgba(255,255,255,0.4)',
                   background: isFree ? 'rgba(34,197,94,0.08)' : 'transparent',
                   border: isFree ? '1px solid rgba(34,197,94,0.2)' : '1px solid transparent',
+                  whiteSpace: 'nowrap',
                 }}
               >
-                {label}{isFree && <span style={{ marginLeft: 3, fontSize: 9 }}>FREE</span>}
+                {label}{isFree && !isNarrow && <span style={{ marginLeft: 3, fontSize: 9 }}>FREE</span>}
               </button>
             </Tooltip>
           )
         })()}
-        <Sep />
-        {/* 10. POSITION GRID */}
-        <Tooltip text="Move window ⌘⇧↑↓←→" flipped={flipped}>
-          <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={12} gap={2} flashPos={p.flashPos} />
-        </Tooltip>
+        {!isNarrow && <Sep />}
+        {/* 10. POSITION GRID — hidden on narrow screens (still accessible via hamburger) */}
+        {!isNarrow && (
+          <Tooltip text="Move window ⌘⇧↑↓←→" flipped={flipped}>
+            <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={12} gap={2} flashPos={p.flashPos} />
+          </Tooltip>
+        )}
         {/* 11. HAMBURGER */}
         <Tooltip text="Settings" flipped={flipped}>
           <IBtn onClickWithRect={p.onSettingsClick}
                 className={p.showSettings ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/30' : ''}>
             <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
-              <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4zM10 12a2 2 0 100 4 2 2 0 000-4z" />
+              <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4z M10 12a2 2 0 100 4 2 2 0 000-4z" />
             </svg>
           </IBtn>
         </Tooltip>
@@ -2514,7 +2552,7 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
         <Tooltip text="Hide ⌃⌘H" flipped={flipped}>
           <IBtn onClick={p.onHide}>
             <ChevronUp />
-            <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38, marginLeft: 2 }}>⌃⌘H</span>
+            {!isNarrow && <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38, marginLeft: 2 }}>⌃⌘H</span>}
           </IBtn>
         </Tooltip>
       </div>
