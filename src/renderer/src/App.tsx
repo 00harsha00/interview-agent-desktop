@@ -267,7 +267,7 @@ function MiniBar({ onRestore, active, endsAt }: { onRestore: () => void; active:
         userSelect: 'none',
       } as React.CSSProperties}
     >
-      <img src={logoSrc} style={{ width: 28, height: 28, objectFit: 'contain', flexShrink: 0 }} />
+      <img src={logoSrc} style={{ width: 28, height: 28, objectFit: 'contain', flexShrink: 0, background: 'transparent', mixBlendMode: 'screen' }} />
       {showTimer && (
         <span style={{
           color: '#ffffff',
@@ -428,7 +428,7 @@ export default function App() {
   // ── Auth ───────────────────────────────────────────────────────────────────
   if (authState === 'loading' || authState === 'unauthenticated') {
     return (
-      <div className="w-full">
+      <div className="w-full" style={{ opacity: 0.90 }}>
         <AuthGate state={authState} onHide={handleHide} onAuthSuccess={refetch} />
       </div>
     )
@@ -437,7 +437,7 @@ export default function App() {
   // ── Idle ───────────────────────────────────────────────────────────────────
   if (authState === 'authenticated' && user && view === 'idle') {
     return (
-      <div className="w-full">
+      <div className="w-full" style={{ opacity: 0.90 }}>
         <IdleScreen
           user={user}
           onHide={handleHide}

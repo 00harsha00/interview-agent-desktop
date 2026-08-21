@@ -522,7 +522,7 @@ interface PopoverSettings {
   _mode?: 'settings' | 'model-picker'
 }
 const DEFAULT_POPOVER_SETTINGS: PopoverSettings = {
-  zoom: 1, opacity: 0.65, autoGen: true, autoDetect: true, privateMode: false,
+  zoom: 1, opacity: 0.75, autoGen: true, autoDetect: true, privateMode: false,
   language: 'en', extraContext: '', aiModel: 'GPT4O', snapPos: 'top-center', fontSize: FONT_SIZE_DEFAULT,
 }
 export function SettingsPopoverWindow() {
@@ -1002,7 +1002,7 @@ export function SessionOverlay({
   const [showAnswer,   setShowAnswer]   = useState(false)
   const [toolbarKey,   setToolbarKey]   = useState(0)
   const [zoom,         setZoom]         = useState(1)
-  const [opacity,      setOpacity]      = useState(0.65)
+  const [opacity,      setOpacity]      = useState(0.75)
   const [autoGen,      setAutoGen]      = useState(session.autoGenerate ?? true)
   // Auto-detect = detect questions from the transcript (silence-based detection).
   // Auto Generate (autoGen) = automatically SEND the detected question to the AI.
@@ -1619,7 +1619,8 @@ export function SessionOverlay({
   // ── Zoom / opacity ─────────────────────────────────────────────────────────
   // Zoom is applied to content panels only (not toolbar) via a CSS zoom wrapper —
   // changing html font-size was scaling the toolbar too, causing layout bugs.
-  useEffect(() => { window.electronAPI.window.setOpacity(opacity) }, [opacity])
+  // Opacity is applied via CSS on the container so the toolbar always stays at
+  // ≥90% regardless of the user's setting, and pre-session screens stay at 90%.
 
   // Force toolbar to fully remount on every restore from mini mode so that
   // transition-all on buttons never gets stuck in an invisible state.
@@ -1761,11 +1762,13 @@ export function SessionOverlay({
   // ── Pre-activation ────────────────────────────────────────────────────────
   if (!isActivated) {
     return (
-      <ActivationModal
-        session={session} onActivate={() => handleActivate(false)} onBack={onEnd}
-        error={activateErr} activating={activating} onHide={() => onHide(MODAL_H)}
-        locked={sessionLocked} onTakeOver={() => handleActivate(true)}
-      />
+      <div style={{ opacity: 0.90 }}>
+        <ActivationModal
+          session={session} onActivate={() => handleActivate(false)} onBack={onEnd}
+          error={activateErr} activating={activating} onHide={() => onHide(MODAL_H)}
+          locked={sessionLocked} onTakeOver={() => handleActivate(true)}
+        />
+      </div>
     )
   }
 
@@ -1800,12 +1803,16 @@ export function SessionOverlay({
   const CONTAINER: React.CSSProperties = {
     borderRadius: 14,
     overflow: 'hidden',
-    background: 'rgba(8,8,12,0.94)',
     display: 'flex',
     flexDirection: flipped ? 'column-reverse' : 'column',
     maxHeight: maxContentH,
     ...(flipped ? { position: 'fixed', bottom: 0, left: 0, right: 0 } as React.CSSProperties : {}),
   }
+
+  // Toolbar always ≥ 90% opacity; content panels use user's chosen opacity.
+  const toolbarOpacity = Math.max(opacity, 0.90)
+  const TOOLBAR_WRAP: React.CSSProperties = { background: 'rgba(8,8,12,0.94)', opacity: toolbarOpacity }
+  const CONTENT_WRAP: React.CSSProperties = { background: 'rgba(8,8,12,0.94)', opacity }
 
   return (
     <div style={{ background: 'transparent' }}>
@@ -1813,6 +1820,7 @@ export function SessionOverlay({
       <div data-overlay ref={overlayRootRef} className="anim-in" style={CONTAINER}>
 
       {/* ══ TOOLBAR ══════════════════════════════════════════════════════════ */}
+      <div style={TOOLBAR_WRAP}>
       <ToolbarBar
         key={toolbarKey}
         companyName={session.companyName}
@@ -1847,9 +1855,10 @@ export function SessionOverlay({
         selectedMicId={selectedMicId}
         onMicDeviceChange={onMicDeviceChange}
       />
+      </div>{/* end toolbar opacity wrapper */}
 
-      {/* ══ CONTENT PANELS — wrapped in CSS zoom so toolbar stays at 100% ═══ */}
-      <div style={{ zoom } as React.CSSProperties}>
+      {/* ══ CONTENT PANELS — wrapped in CSS zoom + user opacity ══════════════ */}
+      <div style={{ ...CONTENT_WRAP, zoom } as React.CSSProperties}>
 
       {/* ══ TRANSCRIPT STRIP — always visible: the queued "next question" tunnel ══ */}
       <CaptionPanel transcript={transcript} partial={partial} height={CAPTION_H} onClear={clearTranscript} fontSize={fontSize} />
