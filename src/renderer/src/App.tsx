@@ -297,6 +297,7 @@ export default function App() {
   const [miniMode,      setMiniMode]      = useState(false)
   // Reported by SessionOverlay so the mini bar can show a live timer + billing dot
   const [sessionMeta,   setSessionMeta]   = useState<{ running: boolean; endsAt: number | null }>({ running: false, endsAt: null })
+  const miniModeRef     = useRef(false)   // mirror of miniMode for stable IPC listeners
   const restoreHeightRef = useRef(340)
   // The app's real width (1/3 of the screen, computed once in main) — fetched
   // once so restoring from the mini-bar doesn't fall back to a hardcoded guess.
@@ -311,33 +312,41 @@ export default function App() {
 
   const handleHide = useCallback((currentHeight = 340) => {
     restoreHeightRef.current = currentHeight
+    miniModeRef.current = true
     setMiniMode(true)
   }, [])
 
   const handleRestore = useCallback(() => {
+    miniModeRef.current = false
     setMiniMode(false)
     window.electronAPI.window.setHeight(restoreHeightRef.current)
     window.electronAPI.window.setSize(appWidthRef.current, restoreHeightRef.current)
   }, [])
 
   // ⌃⌘H on macOS / Ctrl+H on Windows (main-registered global shortcut) —
-  // same toggle as clicking the ∧/∨ button. Not ⌘H — that's macOS's
-  // system-wide "Hide app" shortcut.
+  // same toggle as clicking the ∧/∨ button. Registered ONCE via a stable
+  // ref so re-renders can't produce multiple competing listeners (stale
+  // closure via dependency array was causing the shortcut to always hide
+  // instead of toggling, making the pill disappear entirely).
+  const handleHideRef    = useRef(handleHide)
+  const handleRestoreRef = useRef(handleRestore)
+  useEffect(() => { handleHideRef.current = handleHide }, [handleHide])
+  useEffect(() => { handleRestoreRef.current = handleRestore }, [handleRestore])
   useEffect(() => {
     return window.electronAPI.on('shortcut:toggle-collapse', () => {
-      if (miniMode) handleRestore()
-      else handleHide()
+      if (miniModeRef.current) handleRestoreRef.current()
+      else handleHideRef.current()
     })
-  }, [miniMode, handleHide, handleRestore])
+  }, []) // empty deps — reads live state via refs, never re-registers
 
   // Ctrl+Cmd+I (main-registered global "bring to front" shortcut) — restore
   // out of the mini pill first, so the app doesn't just float forward still
   // collapsed to a tiny bar.
   useEffect(() => {
     return window.electronAPI.on('shortcut:restore-from-mini', () => {
-      if (miniMode) handleRestore()
+      if (miniModeRef.current) handleRestoreRef.current()
     })
-  }, [miniMode, handleRestore])
+  }, []) // stable ref, no re-registration needed
 
   const loadSession = useCallback(async (sessionId: string) => {
     setLoadingSession(true)
