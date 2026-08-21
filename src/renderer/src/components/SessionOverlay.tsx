@@ -2361,200 +2361,184 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           overflow: 'hidden',
         }}
       >
-        {/* ── LEFT GROUP: controls ── */}
-        {/* 1. LOGO */}
-        <div style={{ padding: '2px 4px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-          <img src={logoSrc} style={{ width: 24, height: 24, borderRadius: 6, objectFit: 'contain' }} />
-        </div>
-        <Sep />
-        {/* 2. MIC TOGGLE */}
-        <Tooltip text={p.micOn ? 'Microphone · on' : 'Microphone · off'} flipped={flipped}>
-          <button onClick={p.onToggleMic}
-            className="relative flex items-center justify-center transition-all"
-            style={{
-              padding: '4px 7px', borderRadius: 6,
-              color: p.micOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)',
-            }}
-            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
-            onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = p.micOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
-          >
-            <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-            </svg>
-            {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
-          </button>
-        </Tooltip>
-        {/* 3. MIC SELECTOR */}
-        {p.micOn && p.micDevices.length > 1 && (
-          <MicSelector
-            inputDevices={p.micDevices}
-            selectedInputId={p.selectedMicId}
-            onInputChange={p.onMicDeviceChange}
-            compact
-            flipped={flipped}
-          />
-        )}
-        {/* 4. SYSTEM AUDIO */}
-        <Tooltip text={isSysActive ? 'System audio · recording' : 'System audio · off'} flipped={flipped}>
-          <button onClick={p.onToggleSys}
-            className="relative flex items-center justify-center transition-all"
-            style={{
-              padding: '4px 7px', borderRadius: 6,
-              color: p.sysOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)',
-            }}
-            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
-            onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = p.sysOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
-          >
-            <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-            {p.sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
-          </button>
-        </Tooltip>
-        <Sep />
-        {/* 5. ANSWER */}
-        <Tooltip text="Generate answer ⌘↵" flipped={flipped}>
-          <AnswerBtn
-            onClick={p.onAnswer}
-            disabled={!p.isRunning || !p.isOnline}
-            streaming={p.isStreaming}
-            isNarrow={isNarrow}
-            isVeryNarrow={isVeryNarrow}
-          />
-        </Tooltip>
-        {/* 6. SCREENSHOT — pill-style */}
-        <Tooltip text="Screenshot ⌘⇧↵" flipped={flipped}>
-          <button
-            onClick={() => p.onScreenshot(true)}
-            className="flex items-center select-none transition-all flex-shrink-0"
-            style={{
-              gap: isVeryNarrow ? 0 : 6,
-              padding: isVeryNarrow ? '6px 8px' : '6px 12px',
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 8,
-              color: 'rgba(255,255,255,0.65)',
-              cursor: 'pointer',
-            }}
-            onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
-            onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
-          >
-            <svg style={{ width: 17, height: 17 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            {!isNarrow && <span style={{ fontSize: 13 }}>Screenshot</span>}
-            {!isVeryNarrow && <span style={{
-              fontFamily: 'monospace', fontSize: 10, opacity: 0.45,
-              background: 'rgba(255,255,255,0.08)', borderRadius: 4,
-              padding: '2px 6px',
-            }}>⌘⇧↵</span>}
-          </button>
-        </Tooltip>
-        {/* 7. CHAT — pill-style */}
-        <Tooltip text="Chat ⌘⇧-" flipped={flipped}>
-          <button
-            onClick={p.onToggleChat}
-            className="flex items-center select-none transition-all flex-shrink-0"
-            style={{
-              gap: isVeryNarrow ? 0 : 6,
-              padding: isVeryNarrow ? '6px 8px' : '6px 12px',
-              background: p.showChat ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 8,
-              color: p.showChat ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)',
-              cursor: 'pointer',
-            }}
-            onMouseOver={(e) => { if (!p.showChat) { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' } }}
-            onMouseOut={(e) => { if (!p.showChat) { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' } }}
-          >
-            <svg style={{ width: 17, height: 17 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-            </svg>
-            {!isNarrow && <span style={{ fontSize: 13 }}>Chat</span>}
-            {!isVeryNarrow && <span style={{
-              fontFamily: 'monospace', fontSize: 10, opacity: 0.45,
-              background: 'rgba(255,255,255,0.08)', borderRadius: 4,
-              padding: '2px 6px',
-            }}>⌘⇧-</span>}
-            {p.showAnswer && p.qaPairsCount > 0 && (
-              <span className="ml-0.5 rounded-full text-white flex items-center justify-center"
-                    style={{ height: 14, minWidth: 14, padding: '0 3px', fontSize: 8, fontWeight: 700, background: 'rgba(34,197,94,0.8)' }}>
-                {p.qaPairsCount}
-              </span>
-            )}
-          </button>
-        </Tooltip>
-
-        {/* ── SPACER ── */}
-        <div style={{ flex: 1 }} />
-
-        {/* ── RIGHT GROUP: navigation/meta ── */}
-        {/* 8. TIMER */}
-        <SessionTimer key={p.timerKey} startSeconds={p.timerStartSeconds} onExpire={p.onTimerExpire} mode={p.sessionTimerMode} timerKey={p.timerKey} />
-        {/* 9. STATUS DOT */}
-        <Tooltip text={statusLabel} flipped={flipped}>
-          <div style={{ padding: '0 3px', display: 'flex', alignItems: 'center' }}>
-            <span style={{
-              width: 5, height: 5, borderRadius: '50%',
-              background: statusDotColor,
-              animation: (p.isRunning && (p.smState === 'connected' || p.smState === 'reconnecting')) || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none',
-            }} />
+        {/* ── LEFT GROUP: flex:1 so it takes available space and shrinks ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, flex: 1, minWidth: 0, overflow: 'hidden' }}>
+          {/* 1. LOGO */}
+          <div style={{ padding: '2px 4px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+            <img src={logoSrc} style={{ width: 24, height: 24, borderRadius: 6, objectFit: 'contain' }} />
           </div>
-        </Tooltip>
-        {!p.isOnline && (
-          <Tooltip text="No internet — Answer disabled" flipped={flipped}>
-            <span style={{ fontSize: 11, color: '#fde68a', fontWeight: 600 }}>⚠</span>
+          <Sep />
+          {/* 2. MIC TOGGLE */}
+          <Tooltip text={p.micOn ? 'Microphone · on' : 'Microphone · off'} flipped={flipped}>
+            <button onClick={p.onToggleMic}
+              className="relative flex items-center justify-center transition-all"
+              style={{ padding: '4px 7px', borderRadius: 6, flexShrink: 0, color: p.micOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
+              onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+              onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = p.micOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
+            >
+              <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+              </svg>
+              {p.micOn && <Dot color={isMicActive ? 'red' : 'green'} />}
+            </button>
           </Tooltip>
-        )}
-        {/* MODEL LABEL — click opens focused model picker */}
-        {(() => {
-          const modelInfo = MODELS.find((m) => m.id === p.aiModel)
-          const isFree = modelInfo?.free ?? false
-          const label = isNarrow
-            ? (MODEL_SHORT[p.aiModel] ?? AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
-            : (AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
-          return (
-            <Tooltip text="Switch model" flipped={flipped}>
-              <button
-                onClick={(e) => p.onModelPickerClick(e.currentTarget.getBoundingClientRect())}
-                style={{
-                  padding: '2px 6px', borderRadius: 5,
-                  fontSize: 10, fontWeight: 500, flexShrink: 0,
-                  color: isFree ? '#22c55e' : 'rgba(255,255,255,0.4)',
-                  background: isFree ? 'rgba(34,197,94,0.08)' : 'transparent',
-                  border: isFree ? '1px solid rgba(34,197,94,0.2)' : '1px solid transparent',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {label}{isFree && !isNarrow && <span style={{ marginLeft: 3, fontSize: 9 }}>FREE</span>}
-              </button>
+          {/* 3. MIC SELECTOR */}
+          {p.micOn && p.micDevices.length > 1 && (
+            <MicSelector
+              inputDevices={p.micDevices}
+              selectedInputId={p.selectedMicId}
+              onInputChange={p.onMicDeviceChange}
+              compact
+              flipped={flipped}
+            />
+          )}
+          {/* 4. SYSTEM AUDIO */}
+          <Tooltip text={isSysActive ? 'System audio · recording' : 'System audio · off'} flipped={flipped}>
+            <button onClick={p.onToggleSys}
+              className="relative flex items-center justify-center transition-all"
+              style={{ padding: '4px 7px', borderRadius: 6, flexShrink: 0, color: p.sysOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
+              onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+              onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = p.sysOn ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)' }}
+            >
+              <svg style={{ width: 15, height: 15 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              {p.sysOn && <Dot color={isSysActive ? 'red' : 'green'} />}
+            </button>
+          </Tooltip>
+          <Sep />
+          {/* 5. ANSWER */}
+          <Tooltip text="Generate answer ⌘↵" flipped={flipped}>
+            <AnswerBtn
+              onClick={p.onAnswer}
+              disabled={!p.isRunning || !p.isOnline}
+              streaming={p.isStreaming}
+              isNarrow={isNarrow}
+              isVeryNarrow={isVeryNarrow}
+            />
+          </Tooltip>
+          {/* 6. SCREENSHOT — pill-style */}
+          <Tooltip text="Screenshot ⌘⇧↵" flipped={flipped}>
+            <button
+              onClick={() => p.onScreenshot(true)}
+              className="flex items-center select-none transition-all"
+              style={{
+                gap: isVeryNarrow ? 0 : 6,
+                padding: isVeryNarrow ? '6px 8px' : '6px 12px',
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 8, color: 'rgba(255,255,255,0.65)', cursor: 'pointer', flexShrink: 0,
+              }}
+              onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' }}
+              onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
+            >
+              <svg style={{ width: 17, height: 17 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0118.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              {!isNarrow && <span style={{ fontSize: 13 }}>Screenshot</span>}
+              {!isVeryNarrow && <span style={{ fontFamily: 'monospace', fontSize: 10, opacity: 0.45, background: 'rgba(255,255,255,0.08)', borderRadius: 4, padding: '2px 6px' }}>⌘⇧↵</span>}
+            </button>
+          </Tooltip>
+          {/* 7. CHAT — pill-style */}
+          <Tooltip text="Chat ⌘⇧-" flipped={flipped}>
+            <button
+              onClick={p.onToggleChat}
+              className="flex items-center select-none transition-all"
+              style={{
+                gap: isVeryNarrow ? 0 : 6,
+                padding: isVeryNarrow ? '6px 8px' : '6px 12px',
+                background: p.showChat ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: 8, color: p.showChat ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.65)', cursor: 'pointer', flexShrink: 0,
+              }}
+              onMouseOver={(e) => { if (!p.showChat) { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.color = 'rgba(255,255,255,0.9)' } }}
+              onMouseOut={(e) => { if (!p.showChat) { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' } }}
+            >
+              <svg style={{ width: 17, height: 17 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+              </svg>
+              {!isNarrow && <span style={{ fontSize: 13 }}>Chat</span>}
+              {!isVeryNarrow && <span style={{ fontFamily: 'monospace', fontSize: 10, opacity: 0.45, background: 'rgba(255,255,255,0.08)', borderRadius: 4, padding: '2px 6px' }}>⌘⇧-</span>}
+              {p.showAnswer && p.qaPairsCount > 0 && (
+                <span className="ml-0.5 rounded-full text-white flex items-center justify-center"
+                      style={{ height: 14, minWidth: 14, padding: '0 3px', fontSize: 8, fontWeight: 700, background: 'rgba(34,197,94,0.8)' }}>
+                  {p.qaPairsCount}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+        </div>
+
+        {/* ── RIGHT GROUP: flexShrink:0 — always fully visible ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+          {/* 8. TIMER */}
+          <SessionTimer key={p.timerKey} startSeconds={p.timerStartSeconds} onExpire={p.onTimerExpire} mode={p.sessionTimerMode} timerKey={p.timerKey} />
+          {/* 9. STATUS DOT */}
+          <Tooltip text={statusLabel} flipped={flipped}>
+            <div style={{ padding: '0 3px', display: 'flex', alignItems: 'center' }}>
+              <span style={{
+                width: 5, height: 5, borderRadius: '50%',
+                background: statusDotColor,
+                animation: (p.isRunning && (p.smState === 'connected' || p.smState === 'reconnecting')) || p.isStreaming ? 'pulse 1.5s ease-in-out infinite' : 'none',
+              }} />
+            </div>
+          </Tooltip>
+          {!p.isOnline && (
+            <Tooltip text="No internet — Answer disabled" flipped={flipped}>
+              <span style={{ fontSize: 11, color: '#fde68a', fontWeight: 600 }}>⚠</span>
             </Tooltip>
-          )
-        })()}
-        {!isNarrow && <Sep />}
-        {/* 10. POSITION GRID — hidden on narrow screens (still accessible via hamburger) */}
-        {!isNarrow && (
-          <Tooltip text="Move window ⌘⇧↑↓←→" flipped={flipped}>
-            <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={12} gap={2} flashPos={p.flashPos} />
+          )}
+          {/* 10. MODEL LABEL — click opens focused model picker */}
+          {(() => {
+            const modelInfo = MODELS.find((m) => m.id === p.aiModel)
+            const isFree = modelInfo?.free ?? false
+            const label = isNarrow
+              ? (MODEL_SHORT[p.aiModel] ?? AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
+              : (AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
+            return (
+              <Tooltip text="Switch model" flipped={flipped}>
+                <button
+                  onClick={(e) => p.onModelPickerClick(e.currentTarget.getBoundingClientRect())}
+                  style={{
+                    padding: '2px 6px', borderRadius: 5,
+                    fontSize: 10, fontWeight: 500, flexShrink: 0,
+                    maxWidth: isVeryNarrow ? 60 : isNarrow ? 80 : 140,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    color: isFree ? '#22c55e' : 'rgba(255,255,255,0.4)',
+                    background: isFree ? 'rgba(34,197,94,0.08)' : 'transparent',
+                    border: isFree ? '1px solid rgba(34,197,94,0.2)' : '1px solid transparent',
+                  }}
+                >
+                  {label}{isFree && !isNarrow && <span style={{ marginLeft: 3, fontSize: 9 }}>FREE</span>}
+                </button>
+              </Tooltip>
+            )
+          })()}
+          {/* 11. POSITION GRID — hidden on narrow screens */}
+          {!isNarrow && <Sep />}
+          {!isNarrow && (
+            <Tooltip text="Move window ⌘⇧↑↓←→" flipped={flipped}>
+              <PositionGrid snapPos={p.snapPos} onMove={p.onSnapMove} size={12} gap={2} flashPos={p.flashPos} />
+            </Tooltip>
+          )}
+          {/* 12. HAMBURGER */}
+          <Tooltip text="Settings" flipped={flipped}>
+            <IBtn onClickWithRect={p.onSettingsClick}
+                  className={p.showSettings ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/30' : ''}>
+              <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4zM10 12a2 2 0 100 4 2 2 0 000-4z" />
+              </svg>
+            </IBtn>
           </Tooltip>
-        )}
-        {/* 11. HAMBURGER */}
-        <Tooltip text="Settings" flipped={flipped}>
-          <IBtn onClickWithRect={p.onSettingsClick}
-                className={p.showSettings ? 'bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-400/30' : ''}>
-            <svg style={{ width: 15, height: 15 }} fill="currentColor" viewBox="0 0 20 20">
-              <path d="M10 4a2 2 0 100 4 2 2 0 000-4zM10 8a2 2 0 100 4 2 2 0 000-4z M10 12a2 2 0 100 4 2 2 0 000-4z" />
-            </svg>
-          </IBtn>
-        </Tooltip>
-        {/* 12. COLLAPSE */}
-        <Tooltip text="Hide ⌃⌘H" flipped={flipped}>
-          <IBtn onClick={p.onHide}>
-            <ChevronUp />
-            {!isNarrow && <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38, marginLeft: 2 }}>⌃⌘H</span>}
-          </IBtn>
-        </Tooltip>
+          {/* 13. COLLAPSE */}
+          <Tooltip text="Hide ⌃⌘H" flipped={flipped}>
+            <IBtn onClick={p.onHide}>
+              <ChevronUp />
+              {!isNarrow && <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38, marginLeft: 2 }}>⌃⌘H</span>}
+            </IBtn>
+          </Tooltip>
+        </div>
       </div>
     </>
   )
