@@ -998,6 +998,7 @@ export function SessionOverlay({
 
   const [showChat,     setShowChat]     = useState(false)
   const [showAnswer,   setShowAnswer]   = useState(false)
+  const [toolbarKey,   setToolbarKey]   = useState(0)
   const [zoom,         setZoom]         = useState(1)
   const [opacity,      setOpacity]      = useState(0.65)
   const [autoGen,      setAutoGen]      = useState(session.autoGenerate ?? true)
@@ -1614,8 +1615,15 @@ export function SessionOverlay({
   }, [isActivated, hidden, flipped, maxContentH])
 
   // ── Zoom / opacity ─────────────────────────────────────────────────────────
-  useEffect(() => { document.documentElement.style.fontSize = `${zoom * 16}px` }, [zoom])
+  // Zoom is applied to content panels only (not toolbar) via a CSS zoom wrapper —
+  // changing html font-size was scaling the toolbar too, causing layout bugs.
   useEffect(() => { window.electronAPI.window.setOpacity(opacity) }, [opacity])
+
+  // Force toolbar to fully remount on every restore from mini mode so that
+  // transition-all on buttons never gets stuck in an invisible state.
+  useEffect(() => {
+    if (!hidden) setToolbarKey((k) => k + 1)
+  }, [hidden])
 
   // ── Shared modal card style ───────────────────────────────────────────────
   const modalCardStyle: React.CSSProperties = {
@@ -1804,6 +1812,7 @@ export function SessionOverlay({
 
       {/* ══ TOOLBAR ══════════════════════════════════════════════════════════ */}
       <ToolbarBar
+        key={toolbarKey}
         companyName={session.companyName}
         isRunning={isRunning}
         micOn={micOn}
@@ -1836,6 +1845,9 @@ export function SessionOverlay({
         selectedMicId={selectedMicId}
         onMicDeviceChange={onMicDeviceChange}
       />
+
+      {/* ══ CONTENT PANELS — wrapped in CSS zoom so toolbar stays at 100% ═══ */}
+      <div style={{ zoom } as React.CSSProperties}>
 
       {/* ══ TRANSCRIPT STRIP — always visible: the queued "next question" tunnel ══ */}
       <CaptionPanel transcript={transcript} partial={partial} height={CAPTION_H} onClear={clearTranscript} fontSize={fontSize} />
@@ -1955,6 +1967,8 @@ export function SessionOverlay({
         />
       )}
 
+
+      </div>{/* end zoom wrapper */}
 
       </div>{/* end unified container */}
     </div>
@@ -2237,14 +2251,13 @@ const AnswerPanel = React.memo(function AnswerPanel({
             )}
             <div className="flex gap-2">
               <span className="text-[14px] leading-none mt-0.5 flex-shrink-0">⭐</span>
-              <p
-                className="text-white/82 whitespace-pre-wrap flex-1 min-w-0 answer-text"
-                style={{ fontSize, lineHeight: 1.65, letterSpacing: '0.01em', WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' } as React.CSSProperties}
-              >
-                <StreamingText text={streaming} />
-                {isStreaming && !streaming && <span className="text-white/35 text-[11px]">Thinking…</span>}
+              <div className="flex-1 min-w-0 answer-text" style={{ WebkitFontSmoothing: 'antialiased', MozOsxFontSmoothing: 'grayscale' } as React.CSSProperties}>
+                {streaming
+                  ? <AnswerText content={streaming} fontSize={fontSize} isStreaming={true} />
+                  : <span className="text-white/35 text-[11px]">Thinking…</span>
+                }
                 {isStreaming && <span className="answer-cursor" />}
-              </p>
+              </div>
             </div>
           </>
         ) : currentPair ? (
@@ -2280,19 +2293,19 @@ const AnswerPanel = React.memo(function AnswerPanel({
   )
 })
 
-// Short display names for the model badge in narrow toolbar
-const MODEL_SHORT: Record<string, string> = {
-  CLAUDE_3_5_SONNET: 'Sonnet',
-  CLAUDE_3_HAIKU:    'Haiku',
-  GPT4O:             'GPT-4o',
-  GPT4O_MINI:        '4o Mini',
-  GPT4_TURBO:        '4 Turbo',
-  GEMINI_1_5_PRO:    'Gemini Pro',
-  GEMINI_1_5_FLASH:  'Gemini',
-  LLAMA_3_3_70B:     'Llama 70B',
-  QWEN_2_5_CODER:    'Qwen',
-  NEMOTRON_49B:      'Nemotron',
-  LLAMA_3_1_8B:      'Llama 8B',
+// 2-letter abbreviations for the compact model badge
+const MODEL_ABBR: Record<string, string> = {
+  CLAUDE_3_5_SONNET: 'CS',
+  CLAUDE_3_HAIKU:    'CH',
+  GPT4O:             'G4',
+  GPT4O_MINI:        'GM',
+  GPT4_TURBO:        'GT',
+  GEMINI_1_5_PRO:    'GP',
+  GEMINI_1_5_FLASH:  'GF',
+  LLAMA_3_3_70B:     'L7',
+  QWEN_2_5_CODER:    'QC',
+  NEMOTRON_49B:      'N4',
+  LLAMA_3_1_8B:      'L8',
 }
 
 // ─── ToolbarBar — memo'd so streaming/transcript/timer don't re-render it ──────
@@ -2363,11 +2376,15 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
       >
         {/* ── LEFT GROUP: flex:1 so it takes available space and shrinks ── */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 3, flex: 1, minWidth: 0, overflow: 'hidden' }}>
-          {/* 1. LOGO */}
-          <div style={{ padding: '2px 4px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-            <img src={logoSrc} style={{ width: 24, height: 24, borderRadius: 6, objectFit: 'contain' }} />
-          </div>
-          <Sep />
+          {/* 1. LOGO — hidden when session is active to reclaim ~32px of space */}
+          {!p.isRunning && (
+            <>
+              <div style={{ padding: '2px 4px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <img src={logoSrc} style={{ width: 24, height: 24, borderRadius: 6, objectFit: 'contain' }} />
+              </div>
+              <Sep />
+            </>
+          )}
           {/* 2. MIC TOGGLE */}
           <Tooltip text={p.micOn ? 'Microphone · on' : 'Microphone · off'} flipped={flipped}>
             <button onClick={p.onToggleMic}
@@ -2489,28 +2506,28 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
               <span style={{ fontSize: 11, color: '#fde68a', fontWeight: 600 }}>⚠</span>
             </Tooltip>
           )}
-          {/* 10. MODEL LABEL — click opens focused model picker */}
+          {/* 10. MODEL BADGE — 2-letter abbreviation + green dot for free models */}
           {(() => {
             const modelInfo = MODELS.find((m) => m.id === p.aiModel)
             const isFree = modelInfo?.free ?? false
-            const label = isNarrow
-              ? (MODEL_SHORT[p.aiModel] ?? AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
-              : (AI_MODEL_LABELS[p.aiModel] ?? p.aiModel)
+            const abbr = MODEL_ABBR[p.aiModel] ?? p.aiModel.slice(0, 2)
+            const fullName = AI_MODEL_LABELS[p.aiModel] ?? p.aiModel
             return (
-              <Tooltip text="Switch model" flipped={flipped}>
+              <Tooltip text={`${fullName}${isFree ? ' · FREE' : ''} — click to switch`} flipped={flipped}>
                 <button
                   onClick={(e) => p.onModelPickerClick(e.currentTarget.getBoundingClientRect())}
                   style={{
-                    padding: '2px 6px', borderRadius: 5,
-                    fontSize: 10, fontWeight: 500, flexShrink: 0,
-                    maxWidth: isVeryNarrow ? 60 : isNarrow ? 80 : 140,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    color: isFree ? '#22c55e' : 'rgba(255,255,255,0.4)',
-                    background: isFree ? 'rgba(34,197,94,0.08)' : 'transparent',
-                    border: isFree ? '1px solid rgba(34,197,94,0.2)' : '1px solid transparent',
+                    display: 'flex', alignItems: 'center', gap: 3,
+                    padding: '2px 6px', borderRadius: 5, flexShrink: 0,
+                    fontSize: 11, fontWeight: 600,
+                    color: 'rgba(200,210,255,0.9)',
+                    background: 'rgba(99,102,241,0.2)',
+                    border: '1px solid rgba(99,102,241,0.3)',
+                    cursor: 'pointer',
                   }}
                 >
-                  {label}{isFree && !isNarrow && <span style={{ marginLeft: 3, fontSize: 9 }}>FREE</span>}
+                  {abbr}
+                  {isFree && <span style={{ color: '#22c55e', fontSize: 9, lineHeight: 1 }}>●</span>}
                 </button>
               </Tooltip>
             )
