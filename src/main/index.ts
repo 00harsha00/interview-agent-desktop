@@ -958,6 +958,7 @@ function registerIPC(): void {
   // whether a saved token was found on disk. The callback checks activeAuthToken
   // at call time — safe to register before the token is loaded.
   console.log('[main] registering onBeforeSendHeaders — BACKEND_URL:', BACKEND_URL)
+  console.log('[DEBUG] onBeforeSendHeaders registered')
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['https://*/*', 'http://localhost:*/*'] },
     (details, callback) => {
@@ -967,8 +968,8 @@ function registerIPC(): void {
         url.includes('localhost:4000')
       if (!isOurBackend) { callback({ requestHeaders: details.requestHeaders }); return }
 
-      console.log('[intercept] fired for:', url.slice(0, 120))
-      console.log('[intercept] has token:', !!activeAuthToken)
+      console.log('[DEBUG] interceptor fired:', url.slice(0, 120))
+      console.log('[DEBUG] activeAuthToken:', activeAuthToken ? 'EXISTS (len:' + activeAuthToken.length + ')' : 'NULL')
 
       if (!activeAuthToken) {
         console.log('[intercept] NO AUTH TOKEN — request sent without cookie!')
@@ -984,7 +985,7 @@ function registerIPC(): void {
         .join('; ')
       const injectedCookies = SESSION_COOKIE_NAMES.map((name) => `${name}=${activeAuthToken}`).join('; ')
       headers['Cookie'] = withoutOld ? `${withoutOld}; ${injectedCookies}` : injectedCookies
-      console.log('[intercept] cookie injected ✅')
+      console.log('[DEBUG] cookie injected:', injectedCookies.slice(0, 50))
       callback({ requestHeaders: headers })
     }
   )
@@ -1634,10 +1635,13 @@ function saveToken(token: string): void {
 }
 function loadToken(): string | null {
   const primary = tokenPath()
-  console.log('[token] loading from:', primary)
+  console.log('[DEBUG] loadToken path:', primary)
   try {
     const t = readFileSync(primary, 'utf8').trim()
-    if (t) { console.log('[token] found, length:', t.length); return t }
+    if (t) {
+      console.log('[DEBUG] loadToken result:', 'FOUND len:' + t.length)
+      return t
+    }
   } catch { /* not saved yet */ }
   // Migration: packaged app (productName="IAI") has a different userData dir
   // than dev (name="iai-desktop"). Try the dev path as a one-time fallback.
@@ -1647,7 +1651,7 @@ function loadToken(): string | null {
     const t = readFileSync(devPath, 'utf8').trim()
     if (t) { console.log('[token] migrated from dev path, length:', t.length); saveToken(t); return t }
   } catch { /* no dev token either */ }
-  console.log('[token] no token found anywhere')
+  console.log('[DEBUG] loadToken result:', 'NOT FOUND')
   return null
 }
 

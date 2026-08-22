@@ -243,6 +243,12 @@ export function streamAIAnswer(
       ...(isRegenerate ? { isRegenerate: true } : {}),
       deviceId,
     }
+    console.error('[DEBUG-RENDERER] about to fetch:', url)
+    console.error('[DEBUG-RENDERER] fetch headers:', JSON.stringify({
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    }))
     console.log('[api] streamAIAnswer URL:', url)
     console.log('[api] streamAIAnswer callSessionId:', callSessionId)
     console.log('[api] streamAIAnswer payload:', JSON.stringify(payload).slice(0, 500))
@@ -259,6 +265,8 @@ export function streamAIAnswer(
       signal,
     })
     .then(async (res) => {
+      console.error('[DEBUG-RENDERER] response status:', res.status)
+      console.error('[DEBUG-RENDERER] response headers:', JSON.stringify(Object.fromEntries(res.headers.entries())))
       console.log('[api] streamAIAnswer response:', res.status, res.statusText)
       console.log('[api] response content-type:', res.headers.get('content-type'))
       if (!res.ok) {

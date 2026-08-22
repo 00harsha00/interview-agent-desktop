@@ -1197,7 +1197,10 @@ export function SessionOverlay({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audio, audioSrc])
 
-  console.log('[session] active session:', { id: session.id, status: session.status, mode: session.mode, aiModel: session.aiModel })
+  useEffect(() => {
+    console.log('[session] active session:', { id: session.id, status: session.status, mode: session.mode, aiModel: session.aiModel })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.id])
 
   const ai = useAIStream({
     callSessionId: session.id,
@@ -1220,6 +1223,9 @@ export function SessionOverlay({
 
   // Fix 5: triggerAnswer includes partial + shows answer panel immediately
   const triggerAnswer = useCallback((question?: string, imgs?: string[]) => {
+    // Guard: React onClick passes a MouseEvent as the first arg when called directly;
+    // only accept actual strings (keyboard shortcuts and chat pass real strings).
+    const safeQuestion = typeof question === 'string' ? question : undefined
     const finalQ   = questionBufRef.current.join(' ').trim()
     const partialQ = partialRef.current.trim()
     // Fallback to the visible transcript text when the speech buffers are empty
@@ -1229,8 +1235,11 @@ export function SessionOverlay({
       .join(' ')
       .trim()
       .slice(-1000)
-    const q = question ?? [finalQ, partialQ, transcriptFallback].filter(Boolean).join(' ').trim()
+    const q = safeQuestion ?? [finalQ, partialQ, transcriptFallback].filter(Boolean).join(' ').trim()
     const effectiveQ = q || (imgs?.length ? '' : 'Please provide interview assistance based on the conversation so far.')
+    console.error('[DEBUG-RENDERER] ANSWER CLICKED')
+    console.error('[DEBUG-RENDERER] transcript:', transcriptRef.current.length, transcriptRef.current.slice(0, 3))
+    console.error('[DEBUG-RENDERER] session:', session.id, session.status)
     console.error('[ANSWER] CLICKED - q:', JSON.stringify(q.slice(0, 100)), '| buf:', questionBufRef.current.length, '| partial:', partialRef.current.slice(0, 50), '| transcript entries:', transcriptRef.current.length, '| effectiveQ:', JSON.stringify(effectiveQ.slice(0, 100)))
     if (!effectiveQ && !imgs?.length) return
 
@@ -1475,6 +1484,10 @@ export function SessionOverlay({
   const onToggleMic      = useCallback(() => setMicOn((v) => !v), [])
   const onToggleSys      = useCallback(() => setSysOn((v) => !v), [])
   const onToggleChat     = useCallback(() => setShowChat((v) => !v), [])
+  // Auto-focus the chat input whenever the chat panel opens
+  useEffect(() => {
+    if (showChat) setTimeout(() => inputRef.current?.focus(), 50)
+  }, [showChat])
   // Settings now live in a separate BrowserWindow (see SettingsPopoverWindow
   // + main process popover:* IPC) — this just opens/closes that window
   // instead of toggling in-window portal state. Positioned in real screen
@@ -1525,7 +1538,13 @@ export function SessionOverlay({
   const onNavigateNext   = useCallback((len: number) => setCurrentQA((i) => Math.min(len - 1, i + 1)), [])
   const onClearAnswers   = useCallback(() => { setQaPairs([]); setCurrentQA(-1); setStreaming(''); setShowAnswer(false); ai.abort() }, [ai])
   const onCloseAnswer    = useCallback(() => setShowAnswer(false), [])
-  const onRegenerate     = useCallback((q: string) => { pendingQRef.current = q; ai.ask(q, undefined, true) }, [ai])
+  const onRegenerate     = useCallback((q: string) => {
+    pendingQRef.current = q
+    setStreaming('')
+    setCurrentQA(-1)
+    setShowAnswer(true)
+    ai.ask(q, undefined, true)
+  }, [ai])
   const onDismissError   = useCallback(() => setError(null), [])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
@@ -1938,12 +1957,12 @@ export function SessionOverlay({
             <button onClick={() => void captureScreenshot(false)}
               disabled={screenshots.length >= MAX_SCREENSHOTS}
               className="overlay-btn h-8 px-2 text-[10px] gap-1 flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
-              title={screenshots.length >= MAX_SCREENSHOTS ? `Max ${MAX_SCREENSHOTS} screenshots — send or clear first` : 'Add screenshot'}>
+              title={screenshots.length >= MAX_SCREENSHOTS ? `Max ${MAX_SCREENSHOTS} screenshots — send or clear first` : 'Add screenshot to queue'}>
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
-              <Kbd s="⌘⌥↵" />
+              📷+
             </button>
 
             <button
@@ -2157,7 +2176,12 @@ function StreamingText({ text }: { text: string }) {
 // ─── MDAnswer — ReactMarkdown renderer used for both streaming and completed answers ──
 const MD_COMPONENTS: import('react-markdown').Components = {
   code({ className, children, ...props }) {
-    const isBlock = !props.node?.position || String(children).includes('\n')
+    // react-markdown v10: fenced code blocks get className="language-xxx"; plain
+    // code blocks (no language tag) have no className but their content ends with \n.
+    // Inline code has neither. String() is safe here because react-markdown always
+    // passes code content as a string.
+    const childText = typeof children === 'string' ? children : ''
+    const isBlock = /language-\w+/.test(className ?? '') || childText.endsWith('\n')
     return isBlock ? (
       <pre style={{ background: 'rgba(0,0,0,0.35)', borderRadius: 8, padding: '12px 16px', overflowX: 'auto', margin: '8px 0', border: '1px solid rgba(255,255,255,0.06)' }}>
         <code style={{ fontFamily: 'monospace', fontSize: '0.85em', color: 'rgba(200,240,200,0.9)' }} {...props}>{children}</code>
@@ -2293,7 +2317,7 @@ const AnswerPanel = React.memo(function AnswerPanel({
 
       {/* Q&A content */}
       <div ref={scrollRef} onScroll={handleScroll} className="px-3 pt-2.5 pb-4 overflow-y-auto space-y-3 flex-1"
-           style={{ minHeight: 0, scrollbarWidth: 'none' }}>
+           style={{ minHeight: 0, scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
         {(isStreaming || streaming) ? (
           <>
             {pendingQuestion && (
@@ -2463,11 +2487,11 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           {/* DIVIDER */}
           <div style={div} />
           {/* ANSWER */}
-          <Tooltip text="Generate answer ⌘↵" flipped={flipped}>
-            <button onClick={p.onAnswer} disabled={!p.isRunning}
-              style={{ ...btn, background: '#16a34a', color: '#fff', borderRadius: 10, padding: '5px 14px', fontWeight: 500, gap: 5, opacity: !p.isRunning ? 0.35 : 1, cursor: !p.isRunning ? 'not-allowed' : 'pointer' }}
-              onMouseOver={(e) => { if (p.isRunning) e.currentTarget.style.background = '#15803d' }}
-              onMouseOut={(e) => { e.currentTarget.style.background = '#16a34a' }}>
+          <Tooltip text={!p.isOnline ? 'No internet — Answer disabled' : 'Generate answer ⌘↵'} flipped={flipped}>
+            <button onClick={() => p.onAnswer()} disabled={!p.isRunning || !p.isOnline}
+              style={{ ...btn, background: '#16a34a', color: '#fff', borderRadius: 10, padding: '5px 14px', fontWeight: 500, gap: 5, opacity: (!p.isRunning || !p.isOnline) ? 0.35 : 1, cursor: (!p.isRunning || !p.isOnline) ? 'not-allowed' : 'pointer' }}
+              onMouseOver={(e) => { if (p.isRunning && p.isOnline) e.currentTarget.style.background = '#15803d' }}
+              onMouseOut={(e) => { if (p.isRunning && p.isOnline) e.currentTarget.style.background = '#16a34a' }}>
               {p.isStreaming ? (
                 <svg style={{ width: 13, height: 13 }} className="animate-spin opacity-70" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3.5" />
