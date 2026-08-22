@@ -1879,12 +1879,12 @@ export function SessionOverlay({
   const CONTENT_WRAP: React.CSSProperties = { background: 'rgba(8,8,12,0.94)', opacity }
 
   return (
-    <div style={{ background: 'transparent', display: 'flex', flexDirection: 'column', height: '100%', maxHeight: '100vh', overflow: 'hidden' }}>
+    <div style={{ background: 'transparent' }}>
 
       <div data-overlay ref={overlayRootRef} className="anim-in" style={CONTAINER}>
 
       {/* ══ TOOLBAR ══════════════════════════════════════════════════════════ */}
-      <div style={{ ...TOOLBAR_WRAP, flexShrink: 0 }}>
+      <div style={TOOLBAR_WRAP}>
       <ToolbarBar
         key={toolbarKey}
         companyName={session.companyName}
@@ -1922,7 +1922,7 @@ export function SessionOverlay({
       </div>{/* end toolbar opacity wrapper */}
 
       {/* ══ CONTENT PANELS — wrapped in CSS zoom + user opacity ══════════════ */}
-      <div style={{ ...CONTENT_WRAP, zoom, display: 'flex', flexDirection: 'column', flex: '1 1 0%', minHeight: 0 } as React.CSSProperties}>
+      <div style={{ ...CONTENT_WRAP, zoom } as React.CSSProperties}>
 
       {/* ══ TRANSCRIPT STRIP — always visible: the queued "next question" tunnel ══ */}
       <CaptionPanel transcript={transcript} partial={partial} height={CAPTION_H} onClear={clearTranscript} fontSize={fontSize} />
