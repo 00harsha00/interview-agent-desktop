@@ -55,6 +55,27 @@ const FONT_SIZE_DEFAULT = 14
 // instead of silently failing the entire send once it hits the backend.
 const MAX_SCREENSHOTS = 5
 
+function getErrorMessage(error: unknown): string {
+  const err = error as { message?: string; status?: number; statusCode?: number } | null
+  const msg = err?.message ?? String(error ?? '')
+  const status = err?.status ?? err?.statusCode ?? 0
+  if (status === 402 || msg.includes('credit') || msg.includes('insufficient'))
+    return '💳 Not enough credits. Please purchase more credits to continue.'
+  if (status === 401 || status === 403 || msg.toLowerCase().includes('unauthorized') || msg.toLowerCase().includes('auth'))
+    return '🔐 Session expired. Please sign in again.'
+  if (status === 429 || msg.includes('rate limit') || msg.includes('too many'))
+    return '⏱ Too many requests. Please wait a moment and try again.'
+  if (msg.includes('api key') || msg.includes('invalid key') || msg.includes('authentication_error'))
+    return '🔑 AI model API key issue. Please contact support.'
+  if (msg.includes('overloaded') || status === 503 || (msg.includes('model') && status >= 500))
+    return '🤖 AI model temporarily unavailable. Try switching models in settings.'
+  if (msg.includes('network') || msg.includes('ECONNREFUSED') || (!navigator.onLine && !msg))
+    return '🌐 No internet connection. Please check your network.'
+  if (status === 400 || msg.includes('context') || msg.includes('too long') || msg.includes('token'))
+    return '📝 Response too long for this model. Try a model with larger context (Gemini 1.5 Pro).'
+  return `❌ Error generating answer: ${msg || 'Unknown error'}. Please try again.`
+}
+
 /** Maps the active audio toggle state to the Speaker enum the backend
  *  already has (Transcription.speaker: MIC | SYSTEM) — mic is the
  *  candidate's own voice, system is whatever the OS is playing (typically
@@ -991,6 +1012,7 @@ export function SessionOverlay({
   const [currentQA,    setCurrentQA]    = useState(-1)
   const [streaming,    setStreaming]     = useState('')
   const [error,        setError]        = useState<string | null>(null)
+  const [errorToast,   setErrorToast]   = useState<string | null>(null)
   const [freeExpired,  setFreeExpired]  = useState(false)
   const [outOfCredits, setOutOfCredits] = useState(false)
 
@@ -1217,7 +1239,7 @@ export function SessionOverlay({
     }, []),
     onError: useCallback((msg: string) => {
       setStreaming('')
-      setError(msg.includes('credits') ? 'Out of credits.' : `AI error: ${msg}`)
+      setErrorToast(getErrorMessage({ message: msg }))
     }, []),
   })
 
@@ -1468,7 +1490,14 @@ export function SessionOverlay({
         setShowChat(true)
       }
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') setError('Screenshot failed — check Screen Recording permission.')
+      if ((err as Error).name !== 'AbortError') {
+        const isPermErr = (err as Error).name === 'NotAllowedError'
+          || (err as Error).message?.toLowerCase().includes('permission')
+          || (err as Error).message?.toLowerCase().includes('screen recording')
+        setErrorToast(isPermErr
+          ? '📷 Screen Recording permission needed. Go to System Settings → Privacy & Security → Screen Recording → enable IAI.'
+          : getErrorMessage(err))
+      }
     }
   }, [ai, screenshots.length])
 
@@ -1546,6 +1575,11 @@ export function SessionOverlay({
     ai.ask(q, undefined, true)
   }, [ai])
   const onDismissError   = useCallback(() => setError(null), [])
+  useEffect(() => {
+    if (!errorToast) return
+    const t = setTimeout(() => setErrorToast(null), 5_000)
+    return () => clearTimeout(t)
+  }, [errorToast])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -2012,6 +2046,23 @@ export function SessionOverlay({
       </div>{/* end zoom wrapper */}
 
       </div>{/* end unified container */}
+
+      {/* Error toast — fixed above the toolbar, auto-dismissed after 5 s */}
+      {errorToast && (
+        <div style={{
+          position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(239,68,68,0.95)', color: '#fff',
+          padding: '10px 16px', borderRadius: 8, fontSize: 13,
+          zIndex: 99999, maxWidth: '90%', textAlign: 'center',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        }}>
+          {errorToast}
+          <button onClick={() => setErrorToast(null)}
+                  style={{ marginLeft: 10, background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 14 }}>
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -2246,6 +2297,11 @@ const AnswerPanel = React.memo(function AnswerPanel({
     const el = scrollRef.current
     if (streaming && el && atBottomRef.current) el.scrollTop = el.scrollHeight
   }, [streaming])
+  // Reset to "at bottom" whenever a new generation starts so auto-scroll
+  // resumes even if the user had scrolled up in the previous answer.
+  useEffect(() => {
+    if (isStreaming) atBottomRef.current = true
+  }, [isStreaming])
   // No scroll effect on `currentQA` — that fired on every generation-complete
   // (onDone advances currentQA to the new pair) as well as manual prev/next
   // navigation, snapping the view to the bottom right after the user had
@@ -2317,7 +2373,7 @@ const AnswerPanel = React.memo(function AnswerPanel({
 
       {/* Q&A content */}
       <div ref={scrollRef} onScroll={handleScroll} className="px-3 pt-2.5 pb-4 overflow-y-auto space-y-3 flex-1"
-           style={{ minHeight: 0, scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
+           style={{ minHeight: 0, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.15) transparent' }}>
         {(isStreaming || streaming) ? (
           <>
             {pendingQuestion && (
