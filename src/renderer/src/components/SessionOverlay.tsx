@@ -2039,6 +2039,7 @@ export function SessionOverlay({
           onRegenerate={onRegenerate}
           onDismissError={onDismissError}
           fontSize={fontSize}
+          maxScrollH={Math.max(200, maxContentH - 148)}
         />
       )}
 
@@ -2277,11 +2278,13 @@ interface AnswerPanelProps {
   onRegenerate: (q: string) => void
   onDismissError: () => void
   fontSize: number
+  maxScrollH: number
 }
 const AnswerPanel = React.memo(function AnswerPanel({
   isStreaming, streaming, qaPairs, currentQA, pendingQuestion,
   error, copied,
   onNavigatePrev, onNavigateNext, onClear, onClose, onCopy, onRegenerate, onDismissError, fontSize,
+  maxScrollH,
 }: AnswerPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   // Smart auto-scroll: only follow new streaming tokens while the user is at
@@ -2372,8 +2375,8 @@ const AnswerPanel = React.memo(function AnswerPanel({
       </div>
 
       {/* Q&A content */}
-      <div ref={scrollRef} onScroll={handleScroll} className="px-3 pt-2.5 pb-4 overflow-y-auto space-y-3 flex-1"
-           style={{ minHeight: 0, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.15) transparent' }}>
+      <div ref={scrollRef} onScroll={handleScroll} className="px-3 pt-2.5 pb-4 space-y-3"
+           style={{ overflowY: 'auto', maxHeight: maxScrollH, scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.15) transparent' }}>
         {(isStreaming || streaming) ? (
           <>
             {pendingQuestion && (
