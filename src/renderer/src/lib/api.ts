@@ -12,6 +12,27 @@ class APIError extends Error {
   }
 }
 
+export type ErrorType =
+  | 'AUTH_EXPIRED'
+  | 'NO_CREDITS'
+  | 'RATE_LIMIT'
+  | 'CONTEXT_TOO_LONG'
+  | 'MODEL_ERROR'
+  | 'NETWORK_ERROR'
+  | 'SESSION_NOT_ACTIVE'
+  | 'GENERIC_ERROR'
+
+export function classifyError(status: number, body: string): ErrorType {
+  const b = body.toLowerCase()
+  if (status === 401 || status === 403) return 'AUTH_EXPIRED'
+  if (status === 402) return 'NO_CREDITS'
+  if (status === 429) return 'RATE_LIMIT'
+  if (status === 400 && (b.includes('context') || b.includes('token') || b.includes('length'))) return 'CONTEXT_TOO_LONG'
+  if (status === 400 && b.includes('session')) return 'SESSION_NOT_ACTIVE'
+  if (status >= 500) return 'MODEL_ERROR'
+  return 'GENERIC_ERROR'
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function request<T>(
   path: string,
@@ -274,7 +295,8 @@ export function streamAIAnswer(
         let msg = body
         try { msg = (JSON.parse(body) as { error?: string }).error ?? body } catch {}
         console.error('[api] streamAIAnswer error:', res.status, body)
-        onError(msg)
+        const errType = classifyError(res.status, body)
+        onError(`${errType}:${msg}`)
         return
       }
 
@@ -338,7 +360,7 @@ export function streamAIAnswer(
     })
     .catch((err: Error) => {
       console.error('[api] streamAIAnswer fetch error:', err.message)
-      if (err.name !== 'AbortError') onError(err.message)
+      if (err.name !== 'AbortError') onError(`NETWORK_ERROR:${err.message}`)
     })
   }).catch((err: Error) => {
     console.error('[api] getDeviceId or pre-fetch error:', err.message)

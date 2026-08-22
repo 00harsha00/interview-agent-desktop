@@ -55,6 +55,21 @@ const FONT_SIZE_DEFAULT = 14
 // instead of silently failing the entire send once it hits the backend.
 const MAX_SCREENSHOTS = 5
 
+const ERROR_TYPES = new Set([
+  'AUTH_EXPIRED', 'NO_CREDITS', 'RATE_LIMIT', 'CONTEXT_TOO_LONG',
+  'MODEL_ERROR', 'NETWORK_ERROR', 'SESSION_NOT_ACTIVE', 'GENERIC_ERROR',
+])
+const ERROR_MESSAGES: Record<string, { text: string; color: string }> = {
+  AUTH_EXPIRED:      { text: 'Session expired — please log in again', color: '#f87171' },
+  NO_CREDITS:        { text: 'Out of credits — top up to continue', color: '#fb923c' },
+  RATE_LIMIT:        { text: 'Too many requests — wait a moment and try again', color: '#fbbf24' },
+  CONTEXT_TOO_LONG:  { text: 'Question too long — shorten it and try again', color: '#fbbf24' },
+  MODEL_ERROR:       { text: 'AI model error — try again or switch models', color: '#f87171' },
+  NETWORK_ERROR:     { text: 'Network error — check your internet connection', color: '#94a3b8' },
+  SESSION_NOT_ACTIVE:{ text: 'Session not active — restart the session', color: '#f87171' },
+  GENERIC_ERROR:     { text: 'Something went wrong — please try again', color: '#f87171' },
+}
+
 /** Maps the active audio toggle state to the Speaker enum the backend
  *  already has (Transcription.speaker: MIC | SYSTEM) — mic is the
  *  candidate's own voice, system is whatever the OS is playing (typically
@@ -991,6 +1006,7 @@ export function SessionOverlay({
   const [currentQA,    setCurrentQA]    = useState(-1)
   const [streaming,    setStreaming]     = useState('')
   const [error,        setError]        = useState<string | null>(null)
+  const [errorType,    setErrorType]    = useState<string | null>(null)
   const [freeExpired,  setFreeExpired]  = useState(false)
   const [outOfCredits, setOutOfCredits] = useState(false)
 
@@ -1075,6 +1091,7 @@ export function SessionOverlay({
   const pingRef        = useRef<ReturnType<typeof setInterval> | null>(null)
   const deviceHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const inputRef       = useRef<HTMLInputElement>(null)
+  const thumbScrollRef = useRef<HTMLDivElement>(null)
   const pendingQRef    = useRef('')
   const prevHeightRef  = useRef(TOOLBAR_H)
   const overlayRootRef = useRef<HTMLDivElement>(null)
@@ -1217,7 +1234,11 @@ export function SessionOverlay({
     }, []),
     onError: useCallback((msg: string) => {
       setStreaming('')
-      setError(msg.includes('credits') ? 'Out of credits.' : `AI error: ${msg}`)
+      const colonIdx = msg.indexOf(':')
+      const type = colonIdx > 0 && ERROR_TYPES.has(msg.slice(0, colonIdx)) ? msg.slice(0, colonIdx) : 'GENERIC_ERROR'
+      const raw  = colonIdx > 0 && ERROR_TYPES.has(msg.slice(0, colonIdx)) ? msg.slice(colonIdx + 1) : msg
+      setErrorType(type)
+      setError(ERROR_MESSAGES[type]?.text ?? raw)
     }, []),
   })
 
@@ -1468,7 +1489,12 @@ export function SessionOverlay({
         setShowChat(true)
       }
     } catch (err) {
-      if ((err as Error).name !== 'AbortError') setError('Screenshot failed — check Screen Recording permission.')
+      if ((err as Error).name !== 'AbortError') {
+        const isPermErr = (err as Error).name === 'NotAllowedError' || (err as Error).message?.toLowerCase().includes('permission')
+        setError(isPermErr
+          ? 'Screen Recording permission denied — enable it in System Settings → Privacy & Security → Screen Recording'
+          : 'Screenshot failed — please try again')
+      }
     }
   }, [ai, screenshots.length])
 
@@ -1488,6 +1514,11 @@ export function SessionOverlay({
   useEffect(() => {
     if (showChat) setTimeout(() => inputRef.current?.focus(), 50)
   }, [showChat])
+  // Auto-scroll thumbnails to end when a new screenshot is queued
+  useEffect(() => {
+    const el = thumbScrollRef.current
+    if (el) el.scrollLeft = el.scrollWidth
+  }, [screenshots.length])
   // Settings now live in a separate BrowserWindow (see SettingsPopoverWindow
   // + main process popover:* IPC) — this just opens/closes that window
   // instead of toggling in-window portal state. Positioned in real screen
@@ -1545,7 +1576,7 @@ export function SessionOverlay({
     setShowAnswer(true)
     ai.ask(q, undefined, true)
   }, [ai])
-  const onDismissError   = useCallback(() => setError(null), [])
+  const onDismissError   = useCallback(() => { setError(null); setErrorType(null) }, [])
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -1906,7 +1937,7 @@ export function SessionOverlay({
           {/* Screenshot thumbnails */}
           {screenshots.length > 0 && (
             <div className="flex items-center gap-1.5 px-2.5 pt-2.5">
-              <div className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+              <div ref={thumbScrollRef} className="flex gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
                 {screenshots.map((src, i) => (
                   <div key={i} className="relative flex-shrink-0">
                     <img src={src} alt="sc" className="h-14 w-20 object-cover rounded-lg hover:shadow-lg transition-shadow"
@@ -1996,6 +2027,7 @@ export function SessionOverlay({
           currentQA={currentQA}
           pendingQuestion={pendingQRef.current}
           error={error}
+          errorType={errorType}
           copied={copied}
           onNavigatePrev={onNavigatePrev}
           onNavigateNext={onNavigateNext}
@@ -2217,6 +2249,7 @@ interface AnswerPanelProps {
   currentQA: number
   pendingQuestion: string
   error: string | null
+  errorType: string | null
   copied: string | null
   onNavigatePrev: () => void
   onNavigateNext: (len: number) => void
@@ -2229,7 +2262,7 @@ interface AnswerPanelProps {
 }
 const AnswerPanel = React.memo(function AnswerPanel({
   isStreaming, streaming, qaPairs, currentQA, pendingQuestion,
-  error, copied,
+  error, errorType, copied,
   onNavigatePrev, onNavigateNext, onClear, onClose, onCopy, onRegenerate, onDismissError, fontSize,
 }: AnswerPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -2285,11 +2318,6 @@ const AnswerPanel = React.memo(function AnswerPanel({
             <span className="text-white/30 ml-0.5">Q&A</span>
           </span>
         )}
-        {error && (
-          <span className="text-red-400 text-[10.5px] truncate flex-1 mx-2">{error}
-            <button onClick={onDismissError} className="ml-1 opacity-50 hover:opacity-100">✕</button>
-          </span>
-        )}
         <div className="flex-1" />
         {currentPair && !isStreaming && (
           <>
@@ -2315,9 +2343,19 @@ const AnswerPanel = React.memo(function AnswerPanel({
         </IBtn>
       </div>
 
+      {/* Colored error banner */}
+      {error && (
+        <div className="flex items-center gap-2 px-3 py-1.5 flex-shrink-0"
+             style={{ background: `${(ERROR_MESSAGES[errorType ?? '']?.color ?? '#f87171')}18`, borderTop: `1px solid ${(ERROR_MESSAGES[errorType ?? '']?.color ?? '#f87171')}40` }}>
+          <span className="text-[10.5px] flex-1" style={{ color: ERROR_MESSAGES[errorType ?? '']?.color ?? '#f87171' }}>{error}</span>
+          <button onClick={onDismissError} style={{ color: ERROR_MESSAGES[errorType ?? '']?.color ?? '#f87171', opacity: 0.6 }}
+                  className="hover:opacity-100 text-[10px] flex-shrink-0">✕</button>
+        </div>
+      )}
+
       {/* Q&A content */}
       <div ref={scrollRef} onScroll={handleScroll} className="px-3 pt-2.5 pb-4 overflow-y-auto space-y-3 flex-1"
-           style={{ minHeight: 0, scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
+           style={{ minHeight: 0, maxHeight: 'calc(100vh - 200px)', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.2) transparent' }}>
         {(isStreaming || streaming) ? (
           <>
             {pendingQuestion && (
@@ -2527,7 +2565,7 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
               </svg>
               <span style={{ fontFamily: 'monospace', fontSize: 9, opacity: 0.38 }}>⌘⇧-</span>
-              {p.showAnswer && p.qaPairsCount > 0 && (
+              {!p.showChat && p.showAnswer && p.qaPairsCount > 0 && (
                 <span style={{ height: 14, minWidth: 14, padding: '0 3px', fontSize: 8, fontWeight: 700, background: 'rgba(34,197,94,0.8)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
                   {p.qaPairsCount}
                 </span>
