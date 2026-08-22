@@ -1069,8 +1069,9 @@ export function SessionOverlay({
   const isRunningRef   = useRef(false)
   const saveQueueRef   = useRef<{ text: string; speaker: 'MIC' | 'SYSTEM' }[]>([])
   const silenceRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const questionBufRef = useRef<string[]>([])
-  const partialRef     = useRef('')
+  const questionBufRef  = useRef<string[]>([])
+  const partialRef      = useRef('')
+  const transcriptRef   = useRef<TranscriptEntry[]>([])
   const pingRef        = useRef<ReturnType<typeof setInterval> | null>(null)
   const deviceHeartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const inputRef       = useRef<HTMLInputElement>(null)
@@ -1097,6 +1098,7 @@ export function SessionOverlay({
   }, [userEmail, zoom, opacity, autoGen, autoDetect, privateMode, language, extraContext, aiModel, snapPos, fontSize])
 
   useEffect(() => { partialRef.current = partial }, [partial])
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
 
   // BUG FIX: return 'none' when both toggles are off — previously always fell through to 'system'
   const audioSrc = useMemo(() => {
@@ -1220,8 +1222,17 @@ export function SessionOverlay({
   const triggerAnswer = useCallback((question?: string, imgs?: string[]) => {
     const finalQ   = questionBufRef.current.join(' ').trim()
     const partialQ = partialRef.current.trim()
-    const q = question ?? [finalQ, partialQ].filter(Boolean).join(' ').trim()
-    if (!q && !imgs?.length) return
+    // Fallback to the visible transcript text when the speech buffers are empty
+    // (e.g. Speechmatics not running, permission denied, or audio not captured)
+    const transcriptFallback = transcriptRef.current
+      .map(t => t.text)
+      .join(' ')
+      .trim()
+      .slice(-1000)
+    const q = question ?? [finalQ, partialQ, transcriptFallback].filter(Boolean).join(' ').trim()
+    const effectiveQ = q || (imgs?.length ? '' : 'Please provide interview assistance based on the conversation so far.')
+    console.error('[ANSWER] CLICKED - q:', JSON.stringify(q.slice(0, 100)), '| buf:', questionBufRef.current.length, '| partial:', partialRef.current.slice(0, 50), '| transcript entries:', transcriptRef.current.length, '| effectiveQ:', JSON.stringify(effectiveQ.slice(0, 100)))
+    if (!effectiveQ && !imgs?.length) return
 
     if (silenceRef.current) { clearTimeout(silenceRef.current); silenceRef.current = null }
     questionBufRef.current = []
@@ -1232,11 +1243,11 @@ export function SessionOverlay({
     const snapshots = imgs ?? (screenshots.length ? [...screenshots] : undefined)
     if (snapshots?.length) setScreenshots([])
 
-    pendingQRef.current = q || '[screenshot analysis]'
+    pendingQRef.current = effectiveQ || '[screenshot analysis]'
     setStreaming('')
     setCurrentQA(-1)
     setShowAnswer(true)   // Fix 3: show immediately, not just on done
-    ai.ask(q || 'Analyze this screenshot and provide relevant interview assistance.', snapshots)
+    ai.ask(effectiveQ || 'Analyze this screenshot and provide relevant interview assistance.', snapshots)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ai, screenshots])
 
@@ -1317,8 +1328,8 @@ export function SessionOverlay({
       await audio.start(audioSrc)
       setIsRunning(true); isRunningRef.current = true
 
-      // Countdown: FREE = 10 min, PAID = 30 min; admin = no expiry (set large value)
-      const windowSecs = isAdmin ? 99 * 60 : session.mode === 'FREE' ? 10 * 60 : 30 * 60
+      // Countdown: FREE = 10 min, PAID = 30 min; admin = 60 min (auto-extends free)
+      const windowSecs = isAdmin ? 60 * 60 : session.mode === 'FREE' ? 10 * 60 : 30 * 60
       setTimerStartSeconds(windowSecs)
       setTimerKey((k) => k + 1)
 
@@ -1389,9 +1400,9 @@ export function SessionOverlay({
     } else {
       void extendSession(session.id)
         .then((data) => {
-          setTimerStartSeconds(30 * 60)
+          setTimerStartSeconds(isAdmin ? 60 * 60 : 30 * 60)
           setTimerKey((k) => k + 1)
-          setError(`Auto-extended ⚡ ${data.newBalance.toFixed(1)} credits left`)
+          setError(isAdmin ? 'Auto-extended ⚡ 60 min' : `Auto-extended ⚡ ${data.newBalance.toFixed(1)} credits left`)
           setTimeout(() => setError(null), 4_000)
         })
         .catch(() => {
@@ -1409,7 +1420,7 @@ export function SessionOverlay({
           if (!hiddenRef.current) window.electronAPI.window.setHeight(MODAL_H)
         })
     }
-  }, [session.id, session.mode, sm, audio, ai])
+  }, [session.id, session.mode, isAdmin, sm, audio, ai])
 
   // "Back online" toast — reuses the same transient-message banner as the
   // other brief status notices in this file (auto-extend, audio restored).
@@ -2453,9 +2464,9 @@ const ToolbarBar = React.memo(function ToolbarBar(p: ToolbarBarProps) {
           <div style={div} />
           {/* ANSWER */}
           <Tooltip text="Generate answer ⌘↵" flipped={flipped}>
-            <button onClick={p.onAnswer} disabled={!p.isRunning || !p.isOnline}
-              style={{ ...btn, background: '#16a34a', color: '#fff', borderRadius: 10, padding: '5px 14px', fontWeight: 500, gap: 5, opacity: (!p.isRunning || !p.isOnline) ? 0.35 : 1, cursor: (!p.isRunning || !p.isOnline) ? 'not-allowed' : 'pointer' }}
-              onMouseOver={(e) => { if (p.isRunning && p.isOnline) e.currentTarget.style.background = '#15803d' }}
+            <button onClick={p.onAnswer} disabled={!p.isRunning}
+              style={{ ...btn, background: '#16a34a', color: '#fff', borderRadius: 10, padding: '5px 14px', fontWeight: 500, gap: 5, opacity: !p.isRunning ? 0.35 : 1, cursor: !p.isRunning ? 'not-allowed' : 'pointer' }}
+              onMouseOver={(e) => { if (p.isRunning) e.currentTarget.style.background = '#15803d' }}
               onMouseOut={(e) => { e.currentTarget.style.background = '#16a34a' }}>
               {p.isStreaming ? (
                 <svg style={{ width: 13, height: 13 }} className="animate-spin opacity-70" fill="none" viewBox="0 0 24 24">

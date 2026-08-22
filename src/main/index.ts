@@ -788,35 +788,7 @@ async function setAuthCookies(token: string): Promise<void> {
   )
   await session.defaultSession.cookies.flushStore().catch(() => {})
 
-  // 2. Inject Cookie header on ALL requests to the backend and frontend origins.
-  //    This bypasses the file:// null-origin restriction entirely.
-  session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: [`${BACKEND_URL}/*`, `${FRONTEND_URL}/*`] },
-    (details, callback) => {
-      if (!activeAuthToken) {
-        console.log('[main] intercepting request (no auth token):', details.url.slice(0, 100))
-        callback({ requestHeaders: details.requestHeaders }); return
-      }
-      console.log('[main] intercepting request, injecting cookie:', details.url.slice(0, 100))
-      const headers = { ...details.requestHeaders }
-      const existing = headers['Cookie'] ?? headers['cookie'] ?? ''
-      // Replace or append the session cookie — strip any prior value under
-      // either the plain or __Secure- name so we never send a stale/duplicate.
-      const withoutOld = existing
-        .split(';')
-        .map((c) => c.trim())
-        .filter((c) => c && !/^(?:__Secure-)?next-auth\.session-token=/.test(c))
-        .join('; ')
-      const injectedCookies = SESSION_COOKIE_NAMES.map((name) => `${name}=${activeAuthToken}`).join('; ')
-      const updated = withoutOld
-        ? `${withoutOld}; ${injectedCookies}`
-        : injectedCookies
-      headers['Cookie'] = updated
-      callback({ requestHeaders: headers })
-    }
-  )
-
-  console.log(`[main] Auth token set — cookie injector active for ${BACKEND_URL} / ${FRONTEND_URL}`)
+  console.log(`[main] Auth token set — activeAuthToken length: ${token.length}`)
 }
 
 // ─── Protocol handler ─────────────────────────────────────────────────────────
@@ -981,6 +953,42 @@ async function dispatchProtocolUrl(url: string): Promise<void> {
 
 // ─── IPC handlers ─────────────────────────────────────────────────────────────
 function registerIPC(): void {
+  // ── Cookie injection for renderer → backend calls ───────────────────────────
+  // Registered unconditionally at startup so it's always active regardless of
+  // whether a saved token was found on disk. The callback checks activeAuthToken
+  // at call time — safe to register before the token is loaded.
+  console.log('[main] registering onBeforeSendHeaders — BACKEND_URL:', BACKEND_URL)
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://*/*', 'http://localhost:*/*'] },
+    (details, callback) => {
+      const url = details.url
+      const isOurBackend = url.includes('interview-agent-backend') ||
+        url.includes('localhost:3000') ||
+        url.includes('localhost:4000')
+      if (!isOurBackend) { callback({ requestHeaders: details.requestHeaders }); return }
+
+      console.log('[intercept] fired for:', url.slice(0, 120))
+      console.log('[intercept] has token:', !!activeAuthToken)
+
+      if (!activeAuthToken) {
+        console.log('[intercept] NO AUTH TOKEN — request sent without cookie!')
+        callback({ requestHeaders: details.requestHeaders }); return
+      }
+
+      const headers = { ...details.requestHeaders }
+      const existing = headers['Cookie'] ?? headers['cookie'] ?? ''
+      const withoutOld = existing
+        .split(';')
+        .map((c) => c.trim())
+        .filter((c) => c && !/^(?:__Secure-)?next-auth\.session-token=/.test(c))
+        .join('; ')
+      const injectedCookies = SESSION_COOKIE_NAMES.map((name) => `${name}=${activeAuthToken}`).join('; ')
+      headers['Cookie'] = withoutOld ? `${withoutOld}; ${injectedCookies}` : injectedCookies
+      console.log('[intercept] cookie injected ✅')
+      callback({ requestHeaders: headers })
+    }
+  )
+
   // ── CORS override for renderer → backend calls ──────────────────────────────
   // The renderer loads from file:// (null origin). Chromium blocks credentialed
   // cross-origin reads and rejects "Access-Control-Allow-Origin: null" outright.
@@ -1625,7 +1633,22 @@ function saveToken(token: string): void {
   try { writeFileSync(tokenPath(), token, 'utf8') } catch { /* ignore */ }
 }
 function loadToken(): string | null {
-  try { return readFileSync(tokenPath(), 'utf8').trim() || null } catch { return null }
+  const primary = tokenPath()
+  console.log('[token] loading from:', primary)
+  try {
+    const t = readFileSync(primary, 'utf8').trim()
+    if (t) { console.log('[token] found, length:', t.length); return t }
+  } catch { /* not saved yet */ }
+  // Migration: packaged app (productName="IAI") has a different userData dir
+  // than dev (name="iai-desktop"). Try the dev path as a one-time fallback.
+  try {
+    const devPath = join(app.getPath('home'), 'Library', 'Application Support', 'iai-desktop', 'parakeet', 'session.token')
+    console.log('[token] trying dev fallback:', devPath)
+    const t = readFileSync(devPath, 'utf8').trim()
+    if (t) { console.log('[token] migrated from dev path, length:', t.length); saveToken(t); return t }
+  } catch { /* no dev token either */ }
+  console.log('[token] no token found anywhere')
+  return null
 }
 
 // ─── Device identity (single-device session lock) ────────────────────────────

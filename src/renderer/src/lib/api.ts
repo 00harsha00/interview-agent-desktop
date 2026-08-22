@@ -234,6 +234,7 @@ export function streamAIAnswer(
 ): void {
   void getDeviceId().then((deviceId) => {
     const url = `${BACKEND_URL}/api/chat`
+    console.log('[api] getDeviceId resolved:', deviceId?.slice(0, 8), '| url:', url)
     const payload = {
       callSessionId,
       question,
@@ -331,5 +332,8 @@ export function streamAIAnswer(
       console.error('[api] streamAIAnswer fetch error:', err.message)
       if (err.name !== 'AbortError') onError(err.message)
     })
+  }).catch((err: Error) => {
+    console.error('[api] getDeviceId or pre-fetch error:', err.message)
+    onError(err.message)
   })
 }

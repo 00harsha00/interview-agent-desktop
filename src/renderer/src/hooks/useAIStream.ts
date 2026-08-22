@@ -28,7 +28,8 @@ export function useAIStream({ callSessionId, extraContext, onChunk, onDone, onEr
   }, [])
 
   const ask = useCallback((question: string, images?: string[], isRegenerate?: boolean) => {
-    if (!question.trim()) return
+    const effectiveQuestion = question?.trim() || 'Please provide interview assistance based on the conversation context'
+    console.log('[useAIStream] ask called, effectiveQuestion:', JSON.stringify(effectiveQuestion.slice(0, 100)), 'isStreaming:', isStreaming)
     abort() // cancel any in-flight request
 
     const ctrl  = new AbortController()
@@ -36,9 +37,10 @@ export function useAIStream({ callSessionId, extraContext, onChunk, onDone, onEr
     bufRef.current   = ''
     setIsStreaming(true)
 
+    console.log('[useAIStream] calling streamAIAnswer, sessionId:', optsRef.current.callSessionId)
     streamAIAnswer(
       optsRef.current.callSessionId,
-      question,
+      effectiveQuestion,
       ctrl.signal,
       (chunk) => {
         bufRef.current += chunk
